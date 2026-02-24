@@ -1,4 +1,10 @@
-import streamlit as st
+from supabase import create_client
+import os
+
+SUPABASE_URL = https://nnowtzpkldfrkixeonau.supabase.co
+SUPABASE_KEY = sb_publishable_mtk5MaeLt69KeK68_KFWJA_7TLfYaPl
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)import streamlit as st
 import numpy as np
 
 st.set_page_config(
