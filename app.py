@@ -2,7 +2,13 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from supabase import create_client
+import streamlit as st
 
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
