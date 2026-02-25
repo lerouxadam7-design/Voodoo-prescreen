@@ -3,26 +3,12 @@ import numpy as np
 import requests
 from datetime import datetime
 
+# ---------------------------
+# CONFIG
+# ---------------------------
+
 MODEL_VERSION = "v1.0-beta"
-# ---------------------------
-# Invite-Only Access Control
-# ---------------------------
 
-AUTHORIZED_USERS = [
-    "adaml",
-    "trustedtester@email.com"
-]
-
-user_email = st.text_input("Enter Access Email")
-
-if user_email not in AUTHORIZED_USERS:
-    st.warning("Invite-only beta. Access restricted.")
-    st.stop()
-st.set_page_config(page_title="Voodoo Sports Grading")
-
-# ---------------------------
-# Supabase REST Setup
-# ---------------------------
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
@@ -35,31 +21,37 @@ headers = {
 }
 
 # ---------------------------
-# Branding
+# Invite Only
 # ---------------------------
-st.markdown(
-    "<h1 style='text-align:center;'>VOODOO SPORTS GRADING</h1>",
-    unsafe_allow_html=True
-)
-st.markdown(
-    "<p style='text-align:center; color:#C9A44D;'>PSA Pre-Screen Analyzer</p>",
-    unsafe_allow_html=True
-)
+
+AUTHORIZED_USERS = [
+    "your@email.com"
+]
+
+user_email = st.text_input("Enter Access Email")
+
+if user_email not in AUTHORIZED_USERS:
+    st.warning("Invite-only beta. Access restricted.")
+    st.stop()
+
+# ---------------------------
+# UI
+# ---------------------------
+
+st.set_page_config(page_title="Voodoo Sports Grading")
+
+st.markdown("<h1 style='text-align:center;'>VOODOO SPORTS GRADING</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#C9A44D;'>PSA Pre-Screen Analyzer</p>", unsafe_allow_html=True)
 
 st.divider()
 
-# ---------------------------
-# Upload Section
-# ---------------------------
 front = st.file_uploader("Upload Front Image", type=["jpg", "png"])
 back = st.file_uploader("Upload Back Image", type=["jpg", "png"])
 
 st.divider()
 
-# ---------------------------
-# Card Inputs
-# ---------------------------
 manufacturer = st.text_input("Manufacturer")
+
 stock_type = st.selectbox(
     "Stock Type",
     ["paper", "chrome", "refractor", "foil", "other"]
@@ -70,23 +62,26 @@ psa9 = st.number_input("PSA 9 Value", value=50.0)
 psa8 = st.number_input("PSA 8 Value", value=20.0)
 fee = st.number_input("Grading Fee", value=25.0)
 
-st.divider()
 st.markdown("### Card Condition Inputs")
 
 centering_input = st.slider("Centering (1-10)", 1, 10, 9)
 corners_input = st.slider("Corners (1-10)", 1, 10, 9)
 edges_input = st.slider("Edges (1-10)", 1, 10, 9)
-surface_input = st.slider("Surface (1-10)", 1, 10, 9)    
+surface_input = st.slider("Surface (1-10)", 1, 10, 9)
+
+st.divider()
+
+# ---------------------------
+# Run Analysis
+# ---------------------------
+
 if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
-
     else:
-        # ---------------------------
-        # Weighted grading formula
-        # ---------------------------
 
+        # Weighted grading
         weighted_grade = (
             centering_input * 0.35
             + corners_input * 0.25
@@ -95,49 +90,22 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
-        # ---------------------------
-# Spread Penalty
-# ---------------------------
 
-components = [
-    centering_input,
-    corners_input,
-    edges_input,
-    surface_input
-]
-
-lowest_component = min(components)
-average_component = sum(components) / 4
-
-spread = average_component - lowest_component
-
-# If one category lags behind, apply penalty
-if spread >= 1:
-    mean -= 0.5
-
-if spread >= 2:
-    mean -= 1.0
-        # ---------------------------
-        # Grade Ceiling Logic
-        # ---------------------------
-
-    lowest_component = min(
-    centering_input,
-    corners_input,
-    edges_input,
-    surface_input
+        # Grade ceiling logic
+        lowest_component = min(
+            centering_input,
+            corners_input,
+            edges_input,
+            surface_input
         )
 
-if lowest_component <= 6:
-    mean = min(mean, lowest_component + 1)
+        if lowest_component <= 6:
+            mean = min(mean, lowest_component + 1)
 
-if lowest_component <= 5:
-    mean = min(mean, lowest_component + 0.5)
+        if lowest_component <= 5:
+            mean = min(mean, lowest_component + 0.5)
 
-        # ---------------------------
         # Confidence interval
-        # ---------------------------
-
         component_variance = np.var([
             centering_input,
             corners_input,
@@ -147,10 +115,7 @@ if lowest_component <= 5:
 
         std = round(0.25 + component_variance * 0.1, 2)
 
-        # ---------------------------
         # Probability model
-        # ---------------------------
-
         prob10 = max(0, min(1, 1 - abs(mean - 10)))
         prob9 = max(0, min(1, 1 - abs(mean - 9)))
         prob8 = max(0, 1 - (prob10 + prob9))
@@ -199,7 +164,8 @@ if lowest_component <= 5:
             "expected_value": ev,
             "confidence_interval": std,
             "model_version": MODEL_VERSION,
-            "submitted_by": user_email
+            "submitted_by": user_email,
+            "created_at": str(datetime.now())
         }
 
         response = requests.post(TABLE_URL, json=data, headers=headers)
