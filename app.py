@@ -108,7 +108,8 @@ if lowest_component <= 6:
 
 if lowest_component <= 5:
     mean = min(mean, lowest_component + 0.5)
-        component_variance = np.var([
+
+    component_variance = np.var([
             centering_input,
             corners_input,
             edges_input,
