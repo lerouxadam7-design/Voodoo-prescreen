@@ -2,7 +2,40 @@ import streamlit as st
 import numpy as np
 import requests
 from datetime import datetime
+# ---------------------------
+# Image Quality Validation
+# ---------------------------
 
+from PIL import Image
+import numpy as np
+
+def validate_image_quality(uploaded_file):
+
+    image = Image.open(uploaded_file)
+    image_array = np.array(image)
+
+    height, width = image_array.shape[:2]
+
+    # Resolution check
+    if width < 800 or height < 800:
+        return False, "Image resolution too low (minimum 800x800 required)."
+
+    # Convert to grayscale
+    gray = np.mean(image_array, axis=2)
+
+    # Blur detection using variance
+    blur_score = np.var(gray)
+
+    if blur_score < 100:
+        return False, "Image appears too blurry."
+
+    # Brightness check
+    brightness = np.mean(gray)
+
+    if brightness < 40:
+        return False, "Image too dark."
+
+    return True, "Image passed quality checks."
 # ---------------------------
 # CONFIG
 # ---------------------------
@@ -78,6 +111,19 @@ st.divider()
 if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
+            else:
+
+        # Validate front image
+        valid_front, message_front = validate_image_quality(front)
+        if not valid_front:
+            st.error(f"Front image issue: {message_front}")
+            st.stop()
+
+        # Validate back image
+        valid_back, message_back = validate_image_quality(back)
+        if not valid_back:
+            st.error(f"Back image issue: {message_back}")
+            st.stop()
         st.error("Please upload BOTH front and back images.")
     else:
 
