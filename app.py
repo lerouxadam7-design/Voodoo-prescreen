@@ -65,6 +65,37 @@ def validate_image_quality(uploaded_file):
         quality_score -= 20
 
     return True, "Image passed quality checks.", quality_score
+# ===============================
+# Automatic Centering Estimation
+# ===============================
+
+def estimate_centering(uploaded_file):
+
+    image = Image.open(uploaded_file)
+    image_array = np.array(image)
+
+    gray = np.mean(image_array, axis=2)
+
+    col_sum = np.sum(gray, axis=0)
+    row_sum = np.sum(gray, axis=1)
+
+    col_sum = col_sum / np.max(col_sum)
+    row_sum = row_sum / np.max(row_sum)
+
+    left_border = np.argmax(col_sum > 0.2)
+    right_border = len(col_sum) - np.argmax(col_sum[::-1] > 0.2)
+
+    top_border = np.argmax(row_sum > 0.2)
+    bottom_border = len(row_sum) - np.argmax(row_sum[::-1] > 0.2)
+
+    horizontal_ratio = left_border / (right_border - left_border)
+    vertical_ratio = top_border / (bottom_border - top_border)
+
+    centering_ratio = min(horizontal_ratio, vertical_ratio)
+
+    score = round(centering_ratio * 10, 1)
+
+    return score
 
 # ===============================
 # UI
