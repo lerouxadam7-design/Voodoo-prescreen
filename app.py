@@ -29,7 +29,6 @@ headers = {
 
 AUTHORIZED_USERS = [
     "Adaml"
-    "lerouxadam7@gmail.com"
 ]
 
 user_email = st.text_input("Enter Access Email")
@@ -288,7 +287,7 @@ if st.button("Run Pre-Screen Analysis"):
 # ADMIN ANALYTICS PANEL
 # ---------------------------
 
-if user_email == "lerouxadam7@gmail.com":
+if user_email == "Adaml":
 
     st.divider()
     st.header("Admin Analytics Dashboard")
