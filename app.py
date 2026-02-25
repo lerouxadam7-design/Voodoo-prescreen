@@ -106,11 +106,11 @@ if (
     component_variance < 0.1
 ):
     mean = min(mean + 0.4, 10)
-        if lowest_component <= 6:
-            mean = min(mean, lowest_component + 1)
+    if lowest_component <= 6:
+        mean = min(mean, lowest_component + 1)
 
-        if lowest_component <= 5:
-            mean = min(mean, lowest_component + 0.5)
+    if lowest_component <= 5:
+        mean = min(mean, lowest_component + 0.5)
 
         # Confidence interval
         component_variance = np.var([
