@@ -128,11 +128,11 @@ if spread >= 2:
     surface_input
         )
 
-        if lowest_component <= 6:
-            mean = min(mean, lowest_component + 1)
+if lowest_component <= 6:
+    mean = min(mean, lowest_component + 1)
 
-        if lowest_component <= 5:
-            mean = min(mean, lowest_component + 0.5)
+if lowest_component <= 5:
+    mean = min(mean, lowest_component + 0.5)
 
         # ---------------------------
         # Confidence interval
