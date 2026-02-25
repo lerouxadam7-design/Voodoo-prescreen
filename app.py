@@ -91,7 +91,23 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
+# ---------------------------
+# Grade Ceiling Logic
+# ---------------------------
 
+lowest_component = min(
+    centering_input,
+    corners_input,
+    edges_input,
+    surface_input
+)
+
+# If one component is significantly lower, cap grade
+if lowest_component <= 6:
+    mean = min(mean, lowest_component + 1)
+
+if lowest_component <= 5:
+    mean = min(mean, lowest_component + 0.5)
         component_variance = np.var([
             centering_input,
             corners_input,
