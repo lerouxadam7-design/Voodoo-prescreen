@@ -174,9 +174,20 @@ if st.button("Run Pre-Screen Analysis"):
         std = round(0.25 + component_variance * 0.1, 2)
 
         # Probability model
-        prob10 = max(0, min(1, 1 - abs(mean - 10)))
-        prob9 = max(0, min(1, 1 - abs(mean - 9)))
-        prob8 = max(0, 1 - (prob10 + prob9))
+        def normal_pdf(x, mu, sigma):
+        return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+        sigma = max(std, 0.25)
+
+        prob10 = normal_pdf(mean, 10, sigma)
+        prob9 = normal_pdf(mean, 9, sigma)
+        prob8 = normal_pdf(mean, 8, sigma)
+
+        total = prob10 + prob9 + prob8
+
+        prob10 /= total
+        prob9 /= total
+        prob8 /= total
 
         ev = (
             prob10 * psa10
