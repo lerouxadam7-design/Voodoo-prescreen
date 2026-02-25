@@ -2,7 +2,20 @@ import streamlit as st
 import numpy as np
 import requests
 from datetime import datetime
+# ---------------------------
+# Invite-Only Access Control
+# ---------------------------
 
+AUTHORIZED_USERS = [
+    "lerouxadam7@gmail.com",
+    "trustedtester@email.com"
+]
+
+user_email = st.text_input("Enter Access Email")
+
+if user_email not in AUTHORIZED_USERS:
+    st.warning("Invite-only beta. Access restricted.")
+    st.stop()
 st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
