@@ -9,7 +9,7 @@ MODEL_VERSION = "v1.0-beta"
 # ---------------------------
 
 AUTHORIZED_USERS = [
-    "lerouxadam7@gmail.com",
+    "adaml",
     "trustedtester@email.com"
 ]
 
