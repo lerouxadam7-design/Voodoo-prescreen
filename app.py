@@ -313,6 +313,7 @@ if st.button("Run Pre-Screen Analysis"):
             "model_version": MODEL_VERSION,
             "submitted_by": user_email,
             "image_quality_score": overall_quality,
+            "auto_centering_score": auto_centering_score,
             "front_image_url": front_url,
             "back_image_url": back_url,
             "psa_is_graded": psa_is_graded,
