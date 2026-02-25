@@ -283,3 +283,45 @@ if st.button("Run Pre-Screen Analysis"):
             st.success("Submission saved to database.")
         else:
             st.error(f"Database error: {response.text}")
+# ---------------------------
+# ADMIN ANALYTICS PANEL
+# ---------------------------
+
+if user_email == "lerouxadam7@gmail.com":
+
+    st.divider()
+    st.header("Admin Analytics Dashboard")
+
+    response = requests.get(TABLE_URL, headers=headers)
+
+    if response.status_code == 200:
+
+        records = response.json()
+
+        if len(records) == 0:
+            st.write("No submissions yet.")
+        else:
+            import pandas as pd
+
+            df = pd.DataFrame(records)
+
+            st.subheader("Summary Metrics")
+
+            st.write("Total Submissions:", len(df))
+            st.write("Average Predicted Grade:", round(df["predicted_grade"].mean(), 2))
+            st.write("Average Expected Value:", round(df["expected_value"].mean(), 2))
+            st.write("Average Image Quality Score:", round(df["image_quality_score"].mean(), 2))
+
+            st.subheader("Grade Distribution")
+            st.bar_chart(df["predicted_grade"].value_counts().sort_index())
+
+            st.subheader("Stock Type Distribution")
+            st.bar_chart(df["stock_type"].value_counts())
+
+            st.subheader("Submissions by User")
+            st.bar_chart(df["submitted_by"].value_counts())
+
+            st.subheader("Raw Data")
+            st.dataframe(df)
+    else:
+        st.error("Unable to fetch analytics data.")
