@@ -111,23 +111,28 @@ st.divider()
 if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
-            else:
+        st.error("Please upload BOTH front and back images.")
 
-        # Validate front image
+    else:
+
+        # ---------------------------
+        # Image Quality Validation
+        # ---------------------------
+
         valid_front, message_front = validate_image_quality(front)
         if not valid_front:
             st.error(f"Front image issue: {message_front}")
             st.stop()
 
-        # Validate back image
         valid_back, message_back = validate_image_quality(back)
         if not valid_back:
             st.error(f"Back image issue: {message_back}")
             st.stop()
-        st.error("Please upload BOTH front and back images.")
-    else:
 
+        # ---------------------------
         # Weighted grading
+        # ---------------------------
+
         weighted_grade = (
             centering_input * 0.35
             + corners_input * 0.25
@@ -136,27 +141,24 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
-        # Top-end compression (PSA 10 difficulty)
 
-        # Top-end compression (nonlinear)
+        # Top-end compression
         if mean > 9:
-            compression_factor = 0.4
-            mean = 9 + (mean - 9) * compression_factor
+            mean = 9 + (mean - 9) * 0.4
 
-            # Elite override rule
-if (
-    centering_input >= 9.5 and
-    corners_input >= 9.5 and
-    edges_input >= 9.5 and
-    surface_input >= 9.5 and
-    component_variance < 0.1
-):
-    mean = min(mean + 0.4, 10)
-    if lowest_component <= 6:
-        mean = min(mean, lowest_component + 1)
+        # Grade ceiling logic
+        lowest_component = min(
+            centering_input,
+            corners_input,
+            edges_input,
+            surface_input
+        )
 
-    if lowest_component <= 5:
-        mean = min(mean, lowest_component + 0.5)
+        if lowest_component <= 6:
+            mean = min(mean, lowest_component + 1)
+
+        if lowest_component <= 5:
+            mean = min(mean, lowest_component + 0.5)
 
         # Confidence interval
         component_variance = np.var([
