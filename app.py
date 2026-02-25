@@ -2,40 +2,8 @@ import streamlit as st
 import numpy as np
 import requests
 from datetime import datetime
-# ---------------------------
-# Image Quality Validation
-# ---------------------------
-
 from PIL import Image
-import numpy as np
 
-def validate_image_quality(uploaded_file):
-
-    image = Image.open(uploaded_file)
-    image_array = np.array(image)
-
-    height, width = image_array.shape[:2]
-
-    quality_score = 100
-
-    # Resolution check
-    if width < 1500 or height < 1500:
-        return False, "Image resolution too low.", 0
-
-    # Blur detection
-    gray = np.mean(image_array, axis=2)
-    blur_score = np.var(gray)
-
-    if blur_score < 300:
-        quality_score -= 30
-
-    # Brightness check
-    brightness = np.mean(gray)
-
-    if brightness < 60 or brightness > 220:
-        quality_score -= 20
-
-    return True, "Image passed quality checks.", quality_score
 # ---------------------------
 # CONFIG
 # ---------------------------
@@ -54,11 +22,11 @@ headers = {
 }
 
 # ---------------------------
-# Invite Only
+# Invite Only Access
 # ---------------------------
 
 AUTHORIZED_USERS = [
-    "Adaml"
+    "your@email.com"
 ]
 
 user_email = st.text_input("Enter Access Email")
@@ -66,6 +34,35 @@ user_email = st.text_input("Enter Access Email")
 if user_email not in AUTHORIZED_USERS:
     st.warning("Invite-only beta. Access restricted.")
     st.stop()
+
+# ---------------------------
+# Image Quality Validation
+# ---------------------------
+
+def validate_image_quality(uploaded_file):
+
+    image = Image.open(uploaded_file)
+    image_array = np.array(image)
+
+    height, width = image_array.shape[:2]
+
+    if width < 1500 or height < 1500:
+        return False, "Image resolution too low.", 0
+
+    gray = np.mean(image_array, axis=2)
+
+    blur_score = np.var(gray)
+    brightness = np.mean(gray)
+
+    quality_score = 100
+
+    if blur_score < 300:
+        quality_score -= 30
+
+    if brightness < 60 or brightness > 220:
+        quality_score -= 20
+
+    return True, "Image passed quality checks.", quality_score
 
 # ---------------------------
 # UI
@@ -114,29 +111,25 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Please upload BOTH front and back images.")
     else:
 
-        # ---------------------------
-        # Image Quality Validation
-        # ---------------------------
-
+        # Validate images
         valid_front, message_front, quality_front = validate_image_quality(front)
+        valid_back, message_back, quality_back = validate_image_quality(back)
+
         if not valid_front:
             st.error(f"Front image issue: {message_front}")
             st.stop()
 
-        valid_back, message_back, quality_back = validate_image_quality(back)
         if not valid_back:
             st.error(f"Back image issue: {message_back}")
             st.stop()
+
         overall_quality = min(quality_front, quality_back)
 
         quality_penalty = 0
-
         if overall_quality < 80:
             quality_penalty = 0.3
-        # ---------------------------
-        # Weighted Grading
-        # ---------------------------
 
+        # Weighted grading
         weighted_grade = (
             centering_input * 0.35
             + corners_input * 0.25
@@ -146,18 +139,11 @@ if st.button("Run Pre-Screen Analysis"):
 
         mean = round(weighted_grade, 2)
 
-        # ---------------------------
-        # Top-End Compression
-        # ---------------------------
-
+        # Top-end compression
         if mean > 9:
-            compression_factor = 0.4
-            mean = 9 + (mean - 9) * compression_factor
+            mean = 9 + (mean - 9) * 0.4
 
-        # ---------------------------
-        # Grade Ceiling Logic
-        # ---------------------------
-
+        # Grade ceiling logic
         lowest_component = min(
             centering_input,
             corners_input,
@@ -171,10 +157,10 @@ if st.button("Run Pre-Screen Analysis"):
         if lowest_component <= 5:
             mean = min(mean, lowest_component + 0.5)
 
-        # ---------------------------
-        # Confidence Interval
-        # ---------------------------
+        # Apply quality penalty
+        mean = max(mean - quality_penalty, 1)
 
+        # Confidence interval
         component_variance = np.var([
             centering_input,
             corners_input,
@@ -184,10 +170,7 @@ if st.button("Run Pre-Screen Analysis"):
 
         std = round(0.25 + component_variance * 0.1, 2)
 
-        # ---------------------------
-        # Elite Override (True 10 Possible)
-        # ---------------------------
-
+        # Elite override
         if (
             centering_input == 10 and
             corners_input == 10 and
@@ -197,10 +180,7 @@ if st.button("Run Pre-Screen Analysis"):
         ):
             mean = 10
 
-        # ---------------------------
-        # Gaussian Probability Model
-        # ---------------------------
-
+        # Gaussian probability model
         def normal_pdf(x, mu, sigma):
             return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -216,24 +196,18 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
-        # ---------------------------
-        # Expected Value
-        # ---------------------------
-
+        # Expected value
         ev = (
             prob10 * psa10
             + prob9 * psa9
             + prob8 * psa8
         ) - fee
 
-        # ---------------------------
-        # Display Results
-        # ---------------------------
-
+        # Display
         st.subheader("Pre-Screen Report")
 
         st.markdown(
-            f"<h2 style='color:#C9A44D;'>{mean}</h2>",
+            f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>",
             unsafe_allow_html=True
         )
 
@@ -254,10 +228,7 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # ---------------------------
-        # Save To Database
-        # ---------------------------
-
+        # Save to Supabase
         data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
@@ -265,7 +236,7 @@ if st.button("Run Pre-Screen Analysis"):
             "psa9_value": psa9,
             "psa8_value": psa8,
             "grading_fee": fee,
-            "predicted_grade": mean,
+            "predicted_grade": round(mean,2),
             "prob_10": prob10,
             "prob_9": prob9,
             "prob_8_or_lower": prob8,
@@ -273,6 +244,7 @@ if st.button("Run Pre-Screen Analysis"):
             "confidence_interval": std,
             "model_version": MODEL_VERSION,
             "submitted_by": user_email,
+            "image_quality_score": overall_quality,
             "created_at": str(datetime.now())
         }
 
