@@ -174,7 +174,8 @@ if st.button("Run Pre-Screen Analysis"):
         quality_penalty = 0
         if overall_quality < 80:
             quality_penalty = 0.3
-
+        auto_centering_score = estimate_centering(front)
+        
         # Weighted grading
         weighted_grade = (
             centering_input * 0.35
