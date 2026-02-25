@@ -93,7 +93,16 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
+        lowest_component = min(
+        centering_input,
+        corners_input,
+        edges_input,
+        surface_input
+        )
 
+# Cap rule: if one category is 2+ grades lower than average
+if lowest_component <= mean - 2:
+    mean = lowest_component + 1
         # Confidence interval logic
         component_variance = np.var([
             centering_input,
