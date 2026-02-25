@@ -116,22 +116,21 @@ if st.button("Run Pre-Screen Analysis"):
         # Save to Supabase via REST
         # ---------------------------
         data = {
-            "manufacturer": manufacturer,
-            "stock_type": stock_type,
-            "psa10_value": psa10,
-            "psa9_value": psa9,
-            "psa8_value": psa8,
-            "grading_fee": fee,
-            "predicted_grade": mean,
-            "prob_10": prob10,
-            "prob_9": prob9,
-            "prob_8_or_lower": prob8,
-            "expected_value": ev,
-            "confidence_interval": std,
-            "model_version": "v1.0",
-            "created_at": str(datetime.now())
-            "submitted_by": user_email
-        }
+    "manufacturer": manufacturer,
+    "stock_type": stock_type,
+    "psa10_value": psa10,
+    "psa9_value": psa9,
+    "psa8_value": psa8,
+    "grading_fee": fee,
+    "predicted_grade": mean,
+    "prob_10": prob10,
+    "prob_9": prob9,
+    "prob_8_or_lower": prob8,
+    "expected_value": ev,
+    "confidence_interval": std,
+    "model_version": MODEL_VERSION,
+    "submitted_by": user_email
+}
 
         response = requests.post(TABLE_URL, json=data, headers=headers)
 
