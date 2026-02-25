@@ -311,10 +311,45 @@ if user_email == "Adaml":
 
         if len(records) == 0:
             st.write("No submissions yet.")
+
         else:
             import pandas as pd
 
             df = pd.DataFrame(records)
+
+            # ===============================
+            # Prediction Error Tracking
+            # ===============================
+
+            if "psa_actual_grade" in df.columns:
+
+                df_with_actual = df.dropna(subset=["psa_actual_grade"])
+
+                if len(df_with_actual) > 0:
+
+                    df_with_actual["prediction_error"] = (
+                        df_with_actual["predicted_grade"]
+                        - df_with_actual["psa_actual_grade"]
+                    )
+
+                    st.subheader("Prediction Accuracy Metrics")
+
+                    st.write(
+                        "Mean Absolute Error (MAE):",
+                        round(abs(df_with_actual["prediction_error"]).mean(), 2)
+                    )
+
+                    st.write(
+                        "Average Bias:",
+                        round(df_with_actual["prediction_error"].mean(), 2)
+                    )
+
+                    st.subheader("Prediction Error Distribution")
+                    st.bar_chart(df_with_actual["prediction_error"])
+
+            # ===============================
+            # Summary Metrics
+            # ===============================
 
             st.subheader("Summary Metrics")
 
@@ -324,7 +359,10 @@ if user_email == "Adaml":
             st.write("Average Image Quality Score:", round(df["image_quality_score"].mean(), 2))
 
             if "psa_actual_grade" in df.columns:
-                st.write("Average PSA Actual Grade:", round(df["psa_actual_grade"].dropna().mean(), 2))
+                st.write(
+                    "Average PSA Actual Grade:",
+                    round(df["psa_actual_grade"].dropna().mean(), 2)
+                )
 
             st.subheader("Predicted Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
