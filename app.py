@@ -164,7 +164,7 @@ if st.button("Run Pre-Screen Analysis"):
             mean = 10
 
             # Elite override rule (true 10 possible)
-         if (
+        if (
             centering_input == 10 and
             corners_input == 10 and
              edges_input == 10 and
