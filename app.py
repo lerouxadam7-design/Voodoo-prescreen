@@ -115,7 +115,6 @@ if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
-
     else:
 
         # ---------------------------
@@ -133,7 +132,7 @@ if st.button("Run Pre-Screen Analysis"):
             st.stop()
 
         # ---------------------------
-        # Weighted grading
+        # Weighted Grading
         # ---------------------------
 
         weighted_grade = (
@@ -145,35 +144,18 @@ if st.button("Run Pre-Screen Analysis"):
 
         mean = round(weighted_grade, 2)
 
-                # ---------------------------
-        # Top-end compression
+        # ---------------------------
+        # Top-End Compression
         # ---------------------------
 
         if mean > 9:
             compression_factor = 0.4
             mean = 9 + (mean - 9) * compression_factor
 
-        # Elite override rule (true 10 possible)
-        if (
-            centering_input == 10 and
-            corners_input == 10 and
-            edges_input == 10 and
-            surface_input == 10 and
-            component_variance == 0
-        ):
-            mean = 10
+        # ---------------------------
+        # Grade Ceiling Logic
+        # ---------------------------
 
-            # Elite override rule (true 10 possible)
-        if (
-            centering_input == 10 and
-            corners_input == 10 and
-             edges_input == 10 and
-             surface_input == 10 and
-            component_variance == 0
-        ):
-        mean = 10
-
-        # Grade ceiling logic
         lowest_component = min(
             centering_input,
             corners_input,
@@ -187,7 +169,10 @@ if st.button("Run Pre-Screen Analysis"):
         if lowest_component <= 5:
             mean = min(mean, lowest_component + 0.5)
 
-        # Confidence interval
+        # ---------------------------
+        # Confidence Interval
+        # ---------------------------
+
         component_variance = np.var([
             centering_input,
             corners_input,
@@ -197,7 +182,23 @@ if st.button("Run Pre-Screen Analysis"):
 
         std = round(0.25 + component_variance * 0.1, 2)
 
-        # Probability model
+        # ---------------------------
+        # Elite Override (True 10 Possible)
+        # ---------------------------
+
+        if (
+            centering_input == 10 and
+            corners_input == 10 and
+            edges_input == 10 and
+            surface_input == 10 and
+            component_variance == 0
+        ):
+            mean = 10
+
+        # ---------------------------
+        # Gaussian Probability Model
+        # ---------------------------
+
         def normal_pdf(x, mu, sigma):
             return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -213,11 +214,19 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
+        # ---------------------------
+        # Expected Value
+        # ---------------------------
+
         ev = (
             prob10 * psa10
             + prob9 * psa9
             + prob8 * psa8
         ) - fee
+
+        # ---------------------------
+        # Display Results
+        # ---------------------------
 
         st.subheader("Pre-Screen Report")
 
@@ -242,6 +251,10 @@ if st.button("Run Pre-Screen Analysis"):
             st.success(f"Projected Profit: +${round(ev,2)}")
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
+
+        # ---------------------------
+        # Save To Database
+        # ---------------------------
 
         data = {
             "manufacturer": manufacturer,
