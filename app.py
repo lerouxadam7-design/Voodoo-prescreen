@@ -1,7 +1,11 @@
 import streamlit as st
 import numpy as np
 from datetime import datetime
+from supabase import create_client
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
 
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
@@ -62,7 +66,23 @@ if st.button("Run Pre-Screen Analysis"):
             prob9 * psa9 +
             prob8 * psa8
         ) - fee
+data = {
+    "manufacturer": manufacturer,
+    "stock_type": stock_type,
+    "psa10_value": psa10,
+    "psa9_value": psa9,
+    "psa8_value": psa8,
+    "grading_fee": fee,
+    "predicted_grade": mean,
+    "prob_10": prob10,
+    "prob_9": prob9,
+    "prob_8_or_lower": prob8,
+    "expected_value": ev,
+    "confidence_interval": std,
+    "model_version": "v1.0"
+}
 
+supabase.table("submissions").insert(data).execute()
         st.subheader("Pre-Screen Report")
 
         st.markdown(
