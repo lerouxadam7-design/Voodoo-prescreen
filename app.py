@@ -71,7 +71,12 @@ psa8 = st.number_input("PSA 8 Value", value=20.0)
 fee = st.number_input("Grading Fee", value=25.0)
 
 st.divider()
+st.markdown("### Card Condition Inputs")
 
+centering_input = st.slider("Centering (1-10)", 1, 10, 9)
+corners_input = st.slider("Corners (1-10)", 1, 10, 9)
+edges_input = st.slider("Edges (1-10)", 1, 10, 9)
+surface_input = st.slider("Surface (1-10)", 1, 10, 9)
 if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
