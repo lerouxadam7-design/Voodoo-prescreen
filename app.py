@@ -2,6 +2,8 @@ import streamlit as st
 import numpy as np
 import requests
 from datetime import datetime
+
+MODEL_VERSION = "v1.0-beta"
 # ---------------------------
 # Invite-Only Access Control
 # ---------------------------
