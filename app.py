@@ -82,8 +82,31 @@ if st.button("Run Pre-Screen Analysis"):
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
     else:
-        mean = round(np.random.normal(9.3, 0.3), 2)
-        std = 0.35
+# Weighted grading formula (PSA-style weighting)
+
+weighted_grade = (
+    centering_input * 0.35 +
+    corners_input * 0.25 +
+    edges_input * 0.20 +
+    surface_input * 0.20
+)
+
+mean = round(weighted_grade, 2)
+
+# Confidence interval logic
+component_variance = np.var([
+    centering_input,
+    corners_input,
+    edges_input,
+    surface_input
+])
+
+std = round(0.25 + component_variance * 0.1, 2)
+
+# Probability model
+prob10 = max(0, min(1, 1 - abs(mean - 10)))
+prob9 = max(0, min(1, 1 - abs(mean - 9)))
+prob8 = max(0, 1 - (prob10 + prob9))
 
         prob10 = max(0, min(1, 1 - abs(mean - 10)))
         prob9 = max(0, min(1, 1 - abs(mean - 9)))
