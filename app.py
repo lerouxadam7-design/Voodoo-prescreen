@@ -121,11 +121,11 @@ if spread >= 2:
         # Grade Ceiling Logic
         # ---------------------------
 
-        lowest_component = min(
-            centering_input,
-            corners_input,
-            edges_input,
-            surface_input
+    lowest_component = min(
+    centering_input,
+    corners_input,
+    edges_input,
+    surface_input
         )
 
         if lowest_component <= 6:
