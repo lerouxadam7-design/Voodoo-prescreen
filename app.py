@@ -175,7 +175,7 @@ if st.button("Run Pre-Screen Analysis"):
 
         # Probability model
         def normal_pdf(x, mu, sigma):
-        return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+            return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
         sigma = max(std, 0.25)
 
