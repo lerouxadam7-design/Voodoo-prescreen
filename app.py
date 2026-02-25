@@ -130,6 +130,7 @@ if st.button("Run Pre-Screen Analysis"):
             "confidence_interval": std,
             "model_version": "v1.0",
             "created_at": str(datetime.now())
+            "submitted_by": user_email
         }
 
         response = requests.post(TABLE_URL, json=data, headers=headers)
