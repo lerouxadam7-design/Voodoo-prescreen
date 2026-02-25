@@ -147,11 +147,11 @@ if st.button("Run Pre-Screen Analysis"):
 
         # Top-end compression
         if mean > 9:
-        compression_factor = 0.4
-        mean = 9 + (mean - 9) * compression_factor
+            compression_factor = 0.4
+            mean = 9 + (mean - 9) * compression_factor
 
-        # Elite override rule (true 10 possible)
-        if (
+            # Elite override rule (true 10 possible)
+            if (
             centering_input == 10 and
             corners_input == 10 and
             edges_input == 10 and
