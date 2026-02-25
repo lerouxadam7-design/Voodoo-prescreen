@@ -82,6 +82,9 @@ if st.button("Run Pre-Screen Analysis"):
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
     else:
+        # ---------------------------
+        # Weighted grading formula
+        # ---------------------------
 
         weighted_grade = (
             centering_input * 0.35
@@ -91,16 +94,50 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
-# ---------------------------
-# Grade Ceiling Logic
-# ---------------------------
 
-lowest_component = min(
-    centering_input,
-    corners_input,
-    edges_input,
-    surface_input
-)
+        # ---------------------------
+        # Grade Ceiling Logic
+        # ---------------------------
+
+        lowest_component = min(
+            centering_input,
+            corners_input,
+            edges_input,
+            surface_input
+        )
+
+        if lowest_component <= 6:
+            mean = min(mean, lowest_component + 1)
+
+        if lowest_component <= 5:
+            mean = min(mean, lowest_component + 0.5)
+
+        # ---------------------------
+        # Confidence interval logic
+        # ---------------------------
+
+        component_variance = np.var([
+            centering_input,
+            corners_input,
+            edges_input,
+            surface_input
+        ])
+
+        std = round(0.25 + component_variance * 0.1, 2)
+
+        # ---------------------------
+        # Probability model
+        # ---------------------------
+
+        prob10 = max(0, min(1, 1 - abs(mean - 10)))
+        prob9 = max(0, min(1, 1 - abs(mean - 9)))
+        prob8 = max(0, 1 - (prob10 + prob9))
+
+        ev = (
+            prob10 * psa10
+            + prob9 * psa9
+            + prob8 * psa8
+        ) - fee
 
 # If one component is significantly lower, cap grade
 if lowest_component <= 6:
