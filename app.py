@@ -95,7 +95,28 @@ if st.button("Run Pre-Screen Analysis"):
         )
 
         mean = round(weighted_grade, 2)
+        # ---------------------------
+# Spread Penalty
+# ---------------------------
 
+components = [
+    centering_input,
+    corners_input,
+    edges_input,
+    surface_input
+]
+
+lowest_component = min(components)
+average_component = sum(components) / 4
+
+spread = average_component - lowest_component
+
+# If one category lags behind, apply penalty
+if spread >= 1:
+    mean -= 0.5
+
+if spread >= 2:
+    mean -= 1.0
         # ---------------------------
         # Grade Ceiling Logic
         # ---------------------------
