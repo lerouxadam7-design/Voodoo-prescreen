@@ -92,16 +92,20 @@ if st.button("Run Pre-Screen Analysis"):
         mean = round(weighted_grade, 2)
         # Top-end compression (PSA 10 difficulty)
 
+        # Top-end compression (nonlinear)
         if mean > 9:
-            mean = 9 + (mean - 9) * 0.5
-        # Grade ceiling logic
-        lowest_component = min(
-            centering_input,
-            corners_input,
-            edges_input,
-            surface_input
-        )
+            compression_factor = 0.4
+            mean = 9 + (mean - 9) * compression_factor
 
+            # Elite override rule
+if (
+    centering_input >= 9.5 and
+    corners_input >= 9.5 and
+    edges_input >= 9.5 and
+    surface_input >= 9.5 and
+    component_variance < 0.1
+):
+    mean = min(mean + 0.4, 10)
         if lowest_component <= 6:
             mean = min(mean, lowest_component + 1)
 
