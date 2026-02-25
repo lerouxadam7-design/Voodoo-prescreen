@@ -116,7 +116,7 @@ if lowest_component <= 5:
             surface_input
         ])
 
-        std = round(0.25 + component_variance * 0.1, 2)
+    std = round(0.25 + component_variance * 0.1, 2)
 
         prob10 = max(0, min(1, 1 - abs(mean - 10)))
         prob9 = max(0, min(1, 1 - abs(mean - 9)))
