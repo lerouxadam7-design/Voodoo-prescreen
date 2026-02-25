@@ -2,10 +2,15 @@ import streamlit as st
 import numpy as np
 from datetime import datetime
 from supabase import create_client
+
+# ---------------------------
+# Supabase Setup
+# ---------------------------
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
@@ -66,23 +71,7 @@ if st.button("Run Pre-Screen Analysis"):
             prob9 * psa9 +
             prob8 * psa8
         ) - fee
-data = {
-    "manufacturer": manufacturer,
-    "stock_type": stock_type,
-    "psa10_value": psa10,
-    "psa9_value": psa9,
-    "psa8_value": psa8,
-    "grading_fee": fee,
-    "predicted_grade": mean,
-    "prob_10": prob10,
-    "prob_9": prob9,
-    "prob_8_or_lower": prob8,
-    "expected_value": ev,
-    "confidence_interval": std,
-    "model_version": "v1.0"
-}
 
-supabase.table("submissions").insert(data).execute()
         st.subheader("Pre-Screen Report")
 
         st.markdown(
@@ -102,26 +91,30 @@ supabase.table("submissions").insert(data).execute()
         st.progress(prob8)
         st.write(f"PSA ≤8: {round(prob8*100,1)}%")
 
-        st.write("### Expected Value")
-
         if ev > 0:
             st.success(f"Projected Profit: +${round(ev,2)}")
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Store temporarily
-        if "submissions" not in st.session_state:
-            st.session_state.submissions = []
-
-        st.session_state.submissions.append({
-            "timestamp": datetime.now(),
+        # ---------------------------
+        # Save to Supabase
+        # ---------------------------
+        data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
+            "psa10_value": psa10,
+            "psa9_value": psa9,
+            "psa8_value": psa8,
+            "grading_fee": fee,
             "predicted_grade": mean,
             "prob_10": prob10,
             "prob_9": prob9,
             "prob_8_or_lower": prob8,
-            "expected_value": ev
-        })
+            "expected_value": ev,
+            "confidence_interval": std,
+            "model_version": "v1.0"
+        }
 
-        st.success("Submission saved (temporary session storage).")
+        supabase.table("submissions").insert(data).execute()
+
+        st.success("Submission saved to database.")
