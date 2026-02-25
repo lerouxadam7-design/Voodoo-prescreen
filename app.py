@@ -17,7 +17,7 @@ def validate_image_quality(uploaded_file):
     height, width = image_array.shape[:2]
 
     # Resolution check
-    if width < 800 or height < 800:
+    if width < 1500 or height < 1500:
         return False, "Image resolution too low (minimum 800x800 required)."
 
     # Convert to grayscale
@@ -26,8 +26,14 @@ def validate_image_quality(uploaded_file):
     # Blur detection using variance
     blur_score = np.var(gray)
 
-    if blur_score < 100:
-        return False, "Image appears too blurry."
+    # Blur detection using Laplacian variance
+import cv2
+
+gray_uint8 = gray.astype("uint8")
+laplacian_var = cv2.Laplacian(gray_uint8, cv2.CV_64F).var()
+
+if laplacian_var < 150:
+    return False, "Image appears too blurry."
 
     # Brightness check
     brightness = np.mean(gray)
