@@ -151,14 +151,14 @@ if st.button("Run Pre-Screen Analysis"):
             mean = 9 + (mean - 9) * compression_factor
 
             # Elite override rule (true 10 possible)
-            if (
-                centering_input == 10 and
-                corners_input == 10 and
-                edges_input == 10 and
-                surface_input == 10 and
-                component_variance == 0
+         if (
+            centering_input == 10 and
+            corners_input == 10 and
+             edges_input == 10 and
+             surface_input == 10 and
+            component_variance == 0
         ):
-    mean = 10
+        mean = 10
 
         # Grade ceiling logic
         lowest_component = min(
