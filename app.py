@@ -66,7 +66,7 @@ def validate_image_quality(uploaded_file):
 
     return True, "Image passed quality checks.", quality_score
 # ===============================
-# Automatic Centering Estimation
+# Improved Automatic Centering Estimation
 # ===============================
 
 def estimate_centering(uploaded_file):
@@ -76,24 +76,29 @@ def estimate_centering(uploaded_file):
 
     gray = np.mean(image_array, axis=2)
 
-    col_sum = np.sum(gray, axis=0)
-    row_sum = np.sum(gray, axis=1)
+    # Compute vertical gradient
+    col_gradient = np.abs(np.diff(np.mean(gray, axis=0)))
+    row_gradient = np.abs(np.diff(np.mean(gray, axis=1)))
 
-    col_sum = col_sum / np.max(col_sum)
-    row_sum = row_sum / np.max(row_sum)
+    # Find strongest edges (assume card borders)
+    left_border = np.argmax(col_gradient[:len(col_gradient)//2])
+    right_border = len(col_gradient) - np.argmax(col_gradient[::-1][:len(col_gradient)//2])
 
-    left_border = np.argmax(col_sum > 0.2)
-    right_border = len(col_sum) - np.argmax(col_sum[::-1] > 0.2)
+    top_border = np.argmax(row_gradient[:len(row_gradient)//2])
+    bottom_border = len(row_gradient) - np.argmax(row_gradient[::-1][:len(row_gradient)//2])
 
-    top_border = np.argmax(row_sum > 0.2)
-    bottom_border = len(row_sum) - np.argmax(row_sum[::-1] > 0.2)
+    card_width = right_border - left_border
+    card_height = bottom_border - top_border
 
-    horizontal_ratio = left_border / (right_border - left_border)
-    vertical_ratio = top_border / (bottom_border - top_border)
+    if card_width <= 0 or card_height <= 0:
+        return 0.0
+
+    horizontal_ratio = min(left_border, len(gray[0]) - right_border) / card_width
+    vertical_ratio = min(top_border, len(gray) - bottom_border) / card_height
 
     centering_ratio = min(horizontal_ratio, vertical_ratio)
 
-    score = round(centering_ratio * 10, 1)
+    score = round(centering_ratio * 10, 2)
 
     return score
 
