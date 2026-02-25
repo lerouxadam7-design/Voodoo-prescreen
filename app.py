@@ -1,14 +1,7 @@
 import streamlit as st
 import numpy as np
-import pandas as pd
 from datetime import datetime
-from supabase import create_client
-import streamlit as st
 
-SUPABASE_URL = st.secrets["supabase"]["url"]
-SUPABASE_KEY = st.secrets["supabase"]["key"]
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
@@ -57,7 +50,6 @@ if st.button("Run Pre-Screen Analysis"):
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
     else:
-        # Simulated model (stable placeholder)
         mean = round(np.random.normal(9.3, 0.3), 2)
         std = 0.35
 
@@ -77,6 +69,7 @@ if st.button("Run Pre-Screen Analysis"):
             f"<h2 style='color:#C9A44D;'>{mean}</h2>",
             unsafe_allow_html=True
         )
+
         st.write(f"Confidence Interval ±{std}")
 
         st.write("### Grade Probability")
@@ -96,7 +89,7 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Save locally in session (temporary data collection)
+        # Store temporarily
         if "submissions" not in st.session_state:
             st.session_state.submissions = []
 
@@ -111,4 +104,4 @@ if st.button("Run Pre-Screen Analysis"):
             "expected_value": ev
         })
 
-        st.success("Submission saved (local session).")
+        st.success("Submission saved (temporary session storage).")
