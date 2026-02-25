@@ -78,9 +78,11 @@ corners_input = st.slider("Corners (1-10)", 1, 10, 9)
 edges_input = st.slider("Edges (1-10)", 1, 10, 9)
 surface_input = st.slider("Surface (1-10)", 1, 10, 9)    
 if st.button("Run Pre-Screen Analysis"):
+if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
         st.error("Please upload BOTH front and back images.")
+
     else:
         # ---------------------------
         # Weighted grading formula
@@ -113,7 +115,7 @@ if st.button("Run Pre-Screen Analysis"):
             mean = min(mean, lowest_component + 0.5)
 
         # ---------------------------
-        # Confidence interval logic
+        # Confidence interval
         # ---------------------------
 
         component_variance = np.var([
@@ -128,32 +130,6 @@ if st.button("Run Pre-Screen Analysis"):
         # ---------------------------
         # Probability model
         # ---------------------------
-
-        prob10 = max(0, min(1, 1 - abs(mean - 10)))
-        prob9 = max(0, min(1, 1 - abs(mean - 9)))
-        prob8 = max(0, 1 - (prob10 + prob9))
-
-        ev = (
-            prob10 * psa10
-            + prob9 * psa9
-            + prob8 * psa8
-        ) - fee
-
-# If one component is significantly lower, cap grade
-if lowest_component <= 6:
-    mean = min(mean, lowest_component + 1)
-
-if lowest_component <= 5:
-    mean = min(mean, lowest_component + 0.5)
-
-    component_variance = np.var([
-            centering_input,
-            corners_input,
-            edges_input,
-            surface_input
-        ])
-
-    std = round(0.25 + component_variance * 0.1, 2)
 
         prob10 = max(0, min(1, 1 - abs(mean - 10)))
         prob9 = max(0, min(1, 1 - abs(mean - 9)))
