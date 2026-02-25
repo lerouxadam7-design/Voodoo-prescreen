@@ -16,29 +16,26 @@ def validate_image_quality(uploaded_file):
 
     height, width = image_array.shape[:2]
 
+    quality_score = 100
+
     # Resolution check
     if width < 1500 or height < 1500:
-        return False, "Image resolution too low (minimum 1500x1500 required)."
+        return False, "Image resolution too low.", 0
 
-    # Convert to grayscale manually
+    # Blur detection
     gray = np.mean(image_array, axis=2)
-
-    # Blur detection using variance
     blur_score = np.var(gray)
 
     if blur_score < 300:
-        return False, "Image appears too blurry."
+        quality_score -= 30
 
     # Brightness check
     brightness = np.mean(gray)
 
-    if brightness < 60:
-        return False, "Image too dark."
+    if brightness < 60 or brightness > 220:
+        quality_score -= 20
 
-    if brightness > 220:
-        return False, "Image too bright / overexposed."
-
-    return True, "Image passed quality checks."
+    return True, "Image passed quality checks.", quality_score
 # ---------------------------
 # CONFIG
 # ---------------------------
@@ -121,16 +118,21 @@ if st.button("Run Pre-Screen Analysis"):
         # Image Quality Validation
         # ---------------------------
 
-        valid_front, message_front = validate_image_quality(front)
+        valid_front, message_front, quality_front = validate_image_quality(front)
         if not valid_front:
             st.error(f"Front image issue: {message_front}")
             st.stop()
 
-        valid_back, message_back = validate_image_quality(back)
+        valid_back, message_back, quality_back = validate_image_quality(back)
         if not valid_back:
             st.error(f"Back image issue: {message_back}")
             st.stop()
+        overall_quality = min(quality_front, quality_back)
 
+        quality_penalty = 0
+
+        if overall_quality < 80:
+            quality_penalty = 0.3
         # ---------------------------
         # Weighted Grading
         # ---------------------------
