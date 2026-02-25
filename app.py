@@ -5,11 +5,11 @@ from datetime import datetime
 from PIL import Image
 import uuid
 
-# ---------------------------
+# ===============================
 # CONFIG
-# ---------------------------
+# ===============================
 
-MODEL_VERSION = "v1.1-beta"
+MODEL_VERSION = "v1.2-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -23,9 +23,9 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# ---------------------------
-# Invite Only
-# ---------------------------
+# ===============================
+# INVITE ONLY ACCESS
+# ===============================
 
 AUTHORIZED_USERS = [
     "Adaml"
@@ -37,9 +37,9 @@ if user_email not in AUTHORIZED_USERS:
     st.warning("Invite-only beta. Access restricted.")
     st.stop()
 
-# ---------------------------
-# Image Validation
-# ---------------------------
+# ===============================
+# IMAGE QUALITY VALIDATION
+# ===============================
 
 def validate_image_quality(uploaded_file):
 
@@ -66,9 +66,9 @@ def validate_image_quality(uploaded_file):
 
     return True, "Image passed quality checks.", quality_score
 
-# ---------------------------
+# ===============================
 # UI
-# ---------------------------
+# ===============================
 
 st.set_page_config(page_title="Voodoo Sports Grading")
 
@@ -94,6 +94,20 @@ psa9 = st.number_input("PSA 9 Value", value=50.0)
 psa8 = st.number_input("PSA 8 Value", value=20.0)
 fee = st.number_input("Grading Fee", value=25.0)
 
+st.markdown("### PSA Status")
+
+psa_is_graded = st.checkbox("Is this card already PSA graded?")
+
+psa_actual_grade = None
+
+if psa_is_graded:
+    psa_actual_grade = st.number_input(
+        "Enter PSA Actual Grade",
+        min_value=1.0,
+        max_value=10.0,
+        step=0.5
+    )
+
 st.markdown("### Card Condition Inputs")
 
 centering_input = st.slider("Centering (1-10)", 1, 10, 9)
@@ -103,9 +117,9 @@ surface_input = st.slider("Surface (1-10)", 1, 10, 9)
 
 st.divider()
 
-# ---------------------------
-# Run Analysis
-# ---------------------------
+# ===============================
+# RUN ANALYSIS
+# ===============================
 
 if st.button("Run Pre-Screen Analysis"):
 
@@ -113,7 +127,6 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Please upload BOTH front and back images.")
     else:
 
-        # Validate images
         valid_front, message_front, quality_front = validate_image_quality(front)
         valid_back, message_back, quality_back = validate_image_quality(back)
 
@@ -197,17 +210,13 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
-        # EV
         ev = (
             prob10 * psa10
             + prob9 * psa9
             + prob8 * psa8
         ) - fee
 
-        # ---------------------------
-        # Upload Images to Supabase Storage
-        # ---------------------------
-
+        # Upload images
         front_bytes = front.read()
         back_bytes = back.read()
 
@@ -237,11 +246,11 @@ if st.button("Run Pre-Screen Analysis"):
         front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
         back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
-        # Display Results
+        # Display results
         st.subheader("Pre-Screen Report")
         st.markdown(f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>", unsafe_allow_html=True)
-
         st.write(f"Confidence Interval ±{std}")
+
         st.write("### Grade Probability")
         st.progress(prob10)
         st.write(f"PSA 10: {round(prob10*100,1)}%")
@@ -255,7 +264,7 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Save submission
+        # Save to DB
         data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
@@ -274,6 +283,8 @@ if st.button("Run Pre-Screen Analysis"):
             "image_quality_score": overall_quality,
             "front_image_url": front_url,
             "back_image_url": back_url,
+            "psa_is_graded": psa_is_graded,
+            "psa_actual_grade": psa_actual_grade,
             "created_at": str(datetime.now())
         }
 
@@ -283,20 +294,20 @@ if st.button("Run Pre-Screen Analysis"):
             st.success("Submission saved to database.")
         else:
             st.error(f"Database error: {response.text}")
-# ---------------------------
+            # ===============================
 # ADMIN ANALYTICS PANEL
-# ---------------------------
+# ===============================
 
 if user_email == "Adaml":
 
     st.divider()
     st.header("Admin Analytics Dashboard")
 
-    response = requests.get(TABLE_URL, headers=headers)
+    analytics_response = requests.get(TABLE_URL, headers=headers)
 
-    if response.status_code == 200:
+    if analytics_response.status_code == 200:
 
-        records = response.json()
+        records = analytics_response.json()
 
         if len(records) == 0:
             st.write("No submissions yet.")
@@ -312,7 +323,10 @@ if user_email == "Adaml":
             st.write("Average Expected Value:", round(df["expected_value"].mean(), 2))
             st.write("Average Image Quality Score:", round(df["image_quality_score"].mean(), 2))
 
-            st.subheader("Grade Distribution")
+            if "psa_actual_grade" in df.columns:
+                st.write("Average PSA Actual Grade:", round(df["psa_actual_grade"].dropna().mean(), 2))
+
+            st.subheader("Predicted Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
 
             st.subheader("Stock Type Distribution")
@@ -321,7 +335,11 @@ if user_email == "Adaml":
             st.subheader("Submissions by User")
             st.bar_chart(df["submitted_by"].value_counts())
 
-            st.subheader("Raw Data")
+            st.subheader("Image Quality Distribution")
+            st.bar_chart(df["image_quality_score"].value_counts())
+
+            st.subheader("Raw Dataset")
             st.dataframe(df)
+
     else:
         st.error("Unable to fetch analytics data.")
