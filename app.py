@@ -3,17 +3,19 @@ import numpy as np
 import requests
 from datetime import datetime
 from PIL import Image
+import uuid
 
 # ---------------------------
 # CONFIG
 # ---------------------------
 
-MODEL_VERSION = "v1.0-beta"
+MODEL_VERSION = "v1.1-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
+STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object"
 
 headers = {
     "apikey": SUPABASE_KEY,
@@ -22,7 +24,7 @@ headers = {
 }
 
 # ---------------------------
-# Invite Only Access
+# Invite Only
 # ---------------------------
 
 AUTHORIZED_USERS = [
@@ -36,7 +38,7 @@ if user_email not in AUTHORIZED_USERS:
     st.stop()
 
 # ---------------------------
-# Image Quality Validation
+# Image Validation
 # ---------------------------
 
 def validate_image_quality(uploaded_file):
@@ -143,7 +145,7 @@ if st.button("Run Pre-Screen Analysis"):
         if mean > 9:
             mean = 9 + (mean - 9) * 0.4
 
-        # Grade ceiling logic
+        # Grade ceiling
         lowest_component = min(
             centering_input,
             corners_input,
@@ -157,10 +159,9 @@ if st.button("Run Pre-Screen Analysis"):
         if lowest_component <= 5:
             mean = min(mean, lowest_component + 0.5)
 
-        # Apply quality penalty
         mean = max(mean - quality_penalty, 1)
 
-        # Confidence interval
+        # Confidence
         component_variance = np.var([
             centering_input,
             corners_input,
@@ -180,7 +181,7 @@ if st.button("Run Pre-Screen Analysis"):
         ):
             mean = 10
 
-        # Gaussian probability model
+        # Gaussian probability
         def normal_pdf(x, mu, sigma):
             return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -196,30 +197,56 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
-        # Expected value
+        # EV
         ev = (
             prob10 * psa10
             + prob9 * psa9
             + prob8 * psa8
         ) - fee
 
-        # Display
-        st.subheader("Pre-Screen Report")
+        # ---------------------------
+        # Upload Images to Supabase Storage
+        # ---------------------------
 
-        st.markdown(
-            f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>",
-            unsafe_allow_html=True
+        front_bytes = front.read()
+        back_bytes = back.read()
+
+        unique_id = str(uuid.uuid4())
+
+        front_filename = f"{unique_id}_front.jpg"
+        back_filename = f"{unique_id}_back.jpg"
+
+        requests.post(
+            f"{STORAGE_URL}/card-images/{front_filename}",
+            headers={
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "image/jpeg"
+            },
+            data=front_bytes
         )
 
-        st.write(f"Confidence Interval ±{std}")
+        requests.post(
+            f"{STORAGE_URL}/card-images/{back_filename}",
+            headers={
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "image/jpeg"
+            },
+            data=back_bytes
+        )
 
+        front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
+        back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
+
+        # Display Results
+        st.subheader("Pre-Screen Report")
+        st.markdown(f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>", unsafe_allow_html=True)
+
+        st.write(f"Confidence Interval ±{std}")
         st.write("### Grade Probability")
         st.progress(prob10)
         st.write(f"PSA 10: {round(prob10*100,1)}%")
-
         st.progress(prob9)
         st.write(f"PSA 9: {round(prob9*100,1)}%")
-
         st.progress(prob8)
         st.write(f"PSA ≤8: {round(prob8*100,1)}%")
 
@@ -228,7 +255,7 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Save to Supabase
+        # Save submission
         data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
@@ -245,6 +272,8 @@ if st.button("Run Pre-Screen Analysis"):
             "model_version": MODEL_VERSION,
             "submitted_by": user_email,
             "image_quality_score": overall_quality,
+            "front_image_url": front_url,
+            "back_image_url": back_url,
             "created_at": str(datetime.now())
         }
 
