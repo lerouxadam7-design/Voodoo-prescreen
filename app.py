@@ -1,17 +1,23 @@
 import streamlit as st
 import numpy as np
+import requests
 from datetime import datetime
-from supabase import create_client
+
+st.set_page_config(page_title="Voodoo Sports Grading")
 
 # ---------------------------
-# Supabase Setup
+# Supabase REST Setup
 # ---------------------------
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
-st.set_page_config(page_title="Voodoo Sports Grading")
+headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
 # ---------------------------
 # Branding
@@ -51,9 +57,6 @@ fee = st.number_input("Grading Fee", value=25.0)
 
 st.divider()
 
-# ---------------------------
-# Run Analysis
-# ---------------------------
 if st.button("Run Pre-Screen Analysis"):
 
     if not front or not back:
@@ -97,7 +100,7 @@ if st.button("Run Pre-Screen Analysis"):
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
         # ---------------------------
-        # Save to Supabase
+        # Save to Supabase via REST
         # ---------------------------
         data = {
             "manufacturer": manufacturer,
@@ -112,9 +115,13 @@ if st.button("Run Pre-Screen Analysis"):
             "prob_8_or_lower": prob8,
             "expected_value": ev,
             "confidence_interval": std,
-            "model_version": "v1.0"
+            "model_version": "v1.0",
+            "created_at": str(datetime.now())
         }
 
-        supabase.table("submissions").insert(data).execute()
+        response = requests.post(TABLE_URL, json=data, headers=headers)
 
-        st.success("Submission saved to database.")
+        if response.status_code == 201:
+            st.success("Submission saved to database.")
+        else:
+            st.error(f"Database error: {response.text}")
