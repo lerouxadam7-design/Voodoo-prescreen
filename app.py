@@ -8,7 +8,6 @@ from datetime import datetime
 
 from PIL import Image
 import numpy as np
-import cv2
 
 def validate_image_quality(uploaded_file):
 
@@ -21,15 +20,18 @@ def validate_image_quality(uploaded_file):
     if width < 1500 or height < 1500:
         return False, "Image resolution too low (minimum 1500x1500 required)."
 
-    gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+    # Convert to grayscale manually
+    gray = np.mean(image_array, axis=2)
 
-    # Blur detection
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if laplacian_var < 150:
+    # Blur detection using variance
+    blur_score = np.var(gray)
+
+    if blur_score < 300:
         return False, "Image appears too blurry."
 
     # Brightness check
     brightness = np.mean(gray)
+
     if brightness < 60:
         return False, "Image too dark."
 
