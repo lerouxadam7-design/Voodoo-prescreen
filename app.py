@@ -92,8 +92,8 @@ if st.button("Run Pre-Screen Analysis"):
         mean = round(weighted_grade, 2)
         # Top-end compression (PSA 10 difficulty)
 
-if mean > 9:
-        mean = 9 + (mean - 9) * 0.5
+        if mean > 9:
+            mean = 9 + (mean - 9) * 0.5
         # Grade ceiling logic
         lowest_component = min(
             centering_input,
