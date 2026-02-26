@@ -155,7 +155,7 @@ front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filenam
 back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
     # -------- Save to Supabase --------
-    data = {
+data = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
         "psa10_value": psa10,
