@@ -76,20 +76,27 @@ def estimate_centering(uploaded_file, slab_mode):
     image = Image.open(uploaded_file)
     image_array = np.array(image)
 
-    if slab_mode:
-        h, w = image_array.shape[:2]
-        crop_margin_h = int(h * 0.10)
-        crop_margin_w = int(w * 0.10)
-
-        image_array = image_array[
-            crop_margin_h:h - crop_margin_h,
-            crop_margin_w:w - crop_margin_w
-        ]
-
     gray = np.mean(image_array, axis=2)
 
     height, width = gray.shape
 
+    if slab_mode:
+        # Detect bright card region inside darker slab frame
+
+        threshold = np.mean(gray) * 0.9
+        mask = gray > threshold
+
+        rows = np.where(np.any(mask, axis=1))[0]
+        cols = np.where(np.any(mask, axis=0))[0]
+
+        if len(rows) > 0 and len(cols) > 0:
+            top, bottom = rows[0], rows[-1]
+            left, right = cols[0], cols[-1]
+
+            gray = gray[top:bottom, left:right]
+            height, width = gray.shape
+
+    # Split left/right for symmetry
     left_half = gray[:, :width // 2]
     right_half = gray[:, width // 2:]
     right_half_flipped = np.fliplr(right_half)
