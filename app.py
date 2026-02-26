@@ -132,6 +132,27 @@ if st.button("Run Pre-Screen Analysis"):
         + prob9 * psa9
         + prob8 * psa8
     ) - fee
+# Upload images to Supabase Storage
+
+unique_id = str(uuid.uuid4())
+
+front_filename = f"{unique_id}_front.jpg"
+back_filename = f"{unique_id}_back.jpg"
+
+requests.post(
+    f"{STORAGE_URL}/card-images/{front_filename}",
+    headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+    data=front.getvalue()
+)
+
+requests.post(
+    f"{STORAGE_URL}/card-images/{back_filename}",
+    headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+    data=back.getvalue()
+)
+
+front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
+back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
     # -------- Save to Supabase --------
     data = {
@@ -152,6 +173,8 @@ if st.button("Run Pre-Screen Analysis"):
         "raw_centering_score": raw_centering_score,
         "psa_is_graded": psa_is_graded,
         "psa_actual_grade": psa_actual_grade,
+        "front_image_url": front_url,
+        "back_image_url": back_url,
         "created_at": str(datetime.now())
     }
     save_response = requests.post(TABLE_URL, json=data, headers=headers)
