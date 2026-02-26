@@ -154,7 +154,6 @@ if st.button("Run Pre-Screen Analysis"):
         "psa_actual_grade": psa_actual_grade,
         "created_at": str(datetime.now())
     }
-
         save_response = requests.post(TABLE_URL, json=data, headers=headers)
 
         if save_response.status_code == 201:
