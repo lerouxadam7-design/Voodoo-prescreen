@@ -7,123 +7,15 @@ import uuid
 import pandas as pd
 
 # ===============================
-# CENTERING ENGINE CLASSES
-# ===============================
-
-    def __init__(self):
-        self.glare = GlareDetector()
-        self.confidence = ConfidenceScorer()
-
-    def detect_card(self, image):
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 75, 200)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        largest = max(contours, key=cv2.contourArea)
-        peri = cv2.arcLength(largest, True)
-        approx = cv2.approxPolyDP(largest, 0.02 * peri, True)
-        if len(approx) != 4:
-            raise ValueError("Card detection failed")
-        pts = approx.reshape(4, 2).astype("float32")
-        return self.order_points(pts)
-
-    def warp_card(self, image, pts):
-        (tl, tr, br, bl) = pts
-        widthA = np.linalg.norm(br - bl)
-        widthB = np.linalg.norm(tr - tl)
-        maxWidth = int(max(widthA, widthB))
-        heightA = np.linalg.norm(tr - br)
-        heightB = np.linalg.norm(tl - bl)
-        maxHeight = int(max(heightA, heightB))
-        dst = np.array([
-            [0, 0],
-            [maxWidth - 1, 0],
-            [maxWidth - 1, maxHeight - 1],
-            [0, maxHeight - 1]], dtype="float32")
-        M = cv2.getPerspectiveTransform(pts, dst)
-        return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
-
-    def detect_borders(self, warped):
-        h, w, _ = warped.shape
-        band_w = int(w * 0.15)
-        band_h = int(h * 0.15)
-        bands = [
-            warped[:, :band_w],
-            warped[:, w - band_w:],
-            warped[:band_h, :],
-            warped[h - band_h:, :]
-        ]
-        borders = []
-        for idx, band in enumerate(bands):
-            gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
-            glare_mask = self.glare.detect_glare_mask(band)
-            gray = self.glare.inpaint(gray, glare_mask)
-            edges = cv2.Canny(gray, 50, 150)
-            lines = cv2.HoughLinesP(
-                edges, 1, np.pi / 180, threshold=80,
-                minLineLength=int((h if idx < 2 else w) * 0.6),
-                maxLineGap=10
-            )
-            if lines is None:
-                borders.append(None)
-                continue
-            lines = lines[:, 0, :]
-            best_line = max(lines, key=lambda l: abs(l[1] - l[3]))
-            if idx == 0:
-                borders.append(best_line[0])
-            elif idx == 1:
-                borders.append(w - band_w + best_line[0])
-            elif idx == 2:
-                borders.append(best_line[1])
-            else:
-                borders.append(h - band_h + best_line[1])
-        return borders
-
-    def calculate_centering(self, warped, borders):
-        if None in borders:
-            return None
-        h, w, _ = warped.shape
-        left, right, top, bottom = borders
-        left_border = left
-        right_border = w - right
-        top_border = top
-        bottom_border = h - bottom
-        h_ratio = min(left_border, right_border) / max(left_border, right_border)
-        v_ratio = min(top_border, bottom_border) / max(top_border, bottom_border)
-        return h_ratio, v_ratio
-
-    def analyze_array(self, image_array):
-        pts = self.detect_card(image_array)
-        warped = self.warp_card(image_array, pts)
-        borders = self.detect_borders(warped)
-        ratios = self.calculate_centering(warped, borders)
-        if ratios is None:
-            return {"error": "Border detection failed"}
-        h_ratio, v_ratio = ratios
-        return {
-            "horizontal_ratio": h_ratio,
-            "vertical_ratio": v_ratio
-        }
-
-    def order_points(self, pts):
-        rect = np.zeros((4, 2), dtype="float32")
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]
-        rect[2] = pts[np.argmax(s)]
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]
-        rect[3] = pts[np.argmax(diff)]
-        return rect
-
-
-centering_engine = ProfessionalCenteringEngineV68()
-
-# ===============================
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.4-beta"
+MODEL_VERSION = "v1.5-beta"
+
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
+CENTERING_API_URL = "https://voodoo-centering-api.onrender.com/analyze"
+
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object"
 
@@ -134,15 +26,20 @@ headers = {
 }
 
 # ===============================
-# UI
+# ACCESS CONTROL
 # ===============================
 
 AUTHORIZED_USERS = ["Adaml"]
+
 user_email = st.text_input("Enter Access Email")
 
 if user_email not in AUTHORIZED_USERS:
     st.warning("Invite-only beta. Access restricted.")
     st.stop()
+
+# ===============================
+# UI
+# ===============================
 
 st.set_page_config(page_title="Voodoo Sports Grading")
 st.title("VOODOO SPORTS GRADING")
@@ -160,7 +57,10 @@ psa8 = st.number_input("PSA 8 Value", value=20.0)
 fee = st.number_input("Grading Fee", value=25.0)
 
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
-psa_actual_grade = st.number_input("Enter PSA Actual Grade", min_value=1.0, max_value=10.0, step=0.5) if psa_is_graded else None
+psa_actual_grade = (
+    st.number_input("Enter PSA Actual Grade", min_value=1.0, max_value=10.0, step=0.5)
+    if psa_is_graded else None
+)
 
 corners_input = st.slider("Corners (1-10)", 1, 10, 9)
 edges_input = st.slider("Edges (1-10)", 1, 10, 9)
@@ -176,6 +76,30 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Upload both images.")
         st.stop()
 
+    # -----------------------------
+    # Call Centering API
+    # -----------------------------
+
+    files = {"file": front.getvalue()}
+    response = requests.post(CENTERING_API_URL, files={"file": front})
+
+    if response.status_code != 200:
+        st.error("Centering API failed.")
+        st.stop()
+
+    centering_result = response.json()
+
+    if "error" in centering_result:
+        auto_centering_score = 5.0  # neutral fallback
+    else:
+        h_ratio = centering_result["horizontal_ratio"]
+        v_ratio = centering_result["vertical_ratio"]
+        auto_centering_score = round(min(h_ratio, v_ratio) * 10, 2)
+
+    # -----------------------------
+    # Grading Logic
+    # -----------------------------
+
     weighted_grade = (
         auto_centering_score * 0.35
         + corners_input * 0.25
@@ -188,5 +112,40 @@ if st.button("Run Pre-Screen Analysis"):
     if mean > 9:
         mean = 9 + (mean - 9) * 0.4
 
+    # Probability
+    def normal_pdf(x, mu, sigma):
+        return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+    sigma = 0.3
+
+    prob10 = normal_pdf(mean, 10, sigma)
+    prob9 = normal_pdf(mean, 9, sigma)
+    prob8 = normal_pdf(mean, 8, sigma)
+
+    total = prob10 + prob9 + prob8
+    prob10 /= total
+    prob9 /= total
+    prob8 /= total
+
+    ev = (
+        prob10 * psa10
+        + prob9 * psa9
+        + prob8 * psa8
+    ) - fee
+
+    # -----------------------------
+    # Display
+    # -----------------------------
+
+    st.subheader("Pre-Screen Report")
     st.write("Auto Centering Score:", auto_centering_score)
     st.write("Final Predicted Grade:", round(mean, 2))
+
+    st.write("PSA 10 Probability:", round(prob10 * 100, 1), "%")
+    st.write("PSA 9 Probability:", round(prob9 * 100, 1), "%")
+    st.write("PSA ≤8 Probability:", round(prob8 * 100, 1), "%")
+
+    if ev > 0:
+        st.success(f"Projected Profit: +${round(ev, 2)}")
+    else:
+        st.error(f"Projected Loss: -${abs(round(ev, 2))}")
