@@ -380,9 +380,35 @@ if user_email == "Adaml":
                     st.subheader("Prediction Error Distribution")
                     st.bar_chart(df_with_actual["prediction_error"])
 
-            # ---------------------------
+            # ===============================
+            # Bias by Stock Type
+            # ===============================
+
+            if len(df_with_actual) > 0:
+
+                st.subheader("Bias by Stock Type")
+
+                stock_bias = (
+                    df_with_actual
+                    .groupby("stock_type")
+                    .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
+                )
+
+                st.bar_chart(stock_bias)
+
+                st.subheader("Bias by Manufacturer")
+
+                manufacturer_bias = (
+                    df_with_actual
+                    .groupby("manufacturer")
+                    .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
+                )
+
+                st.bar_chart(manufacturer_bias)
+
+            # ===============================
             # Summary Metrics
-            # ---------------------------
+            # ===============================
 
             st.subheader("Summary Metrics")
 
@@ -397,6 +423,10 @@ if user_email == "Adaml":
                     "Average PSA Actual Grade:",
                     round(df["psa_actual_grade"].dropna().mean(), 2)
                 )
+
+            # ===============================
+            # Distributions
+            # ===============================
 
             st.subheader("Predicted Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
