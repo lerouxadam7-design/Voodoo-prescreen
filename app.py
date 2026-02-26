@@ -262,12 +262,6 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
-        ev = (
-            prob10 * psa10
-            + prob9 * psa9
-            + prob8 * psa8
-        ) - fee
-
         # Upload images
         front_bytes = front.read()
         back_bytes = back.read()
