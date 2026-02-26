@@ -146,9 +146,9 @@ if st.button("Run Pre-Screen Analysis"):
 )
 
 requests.post(
-f"{STORAGE_URL}/card-images/{back_filename}",
-    headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-    data=back.getvalue()
+    f"{STORAGE_URL}/card-images/{back_filename}",
+        headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+        data=back.getvalue()
 )
 
 front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
