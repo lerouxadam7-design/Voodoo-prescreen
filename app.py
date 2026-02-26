@@ -4,12 +4,13 @@ import requests
 from datetime import datetime
 from PIL import Image
 import uuid
+import pandas as pd
 
 # ===============================
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.2-beta"
+MODEL_VERSION = "v1.3-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -38,7 +39,7 @@ if user_email not in AUTHORIZED_USERS:
     st.stop()
 
 # ===============================
-# IMAGE QUALITY VALIDATION
+# IMAGE VALIDATION
 # ===============================
 
 def validate_image_quality(uploaded_file):
@@ -65,8 +66,9 @@ def validate_image_quality(uploaded_file):
         quality_score -= 20
 
     return True, "Image passed quality checks.", quality_score
+
 # ===============================
-# Improved Automatic Centering Estimation
+# AUTO CENTERING
 # ===============================
 
 def estimate_centering(uploaded_file):
@@ -76,11 +78,9 @@ def estimate_centering(uploaded_file):
 
     gray = np.mean(image_array, axis=2)
 
-    # Compute vertical gradient
     col_gradient = np.abs(np.diff(np.mean(gray, axis=0)))
     row_gradient = np.abs(np.diff(np.mean(gray, axis=1)))
 
-    # Find strongest edges (assume card borders)
     left_border = np.argmax(col_gradient[:len(col_gradient)//2])
     right_border = len(col_gradient) - np.argmax(col_gradient[::-1][:len(col_gradient)//2])
 
@@ -93,12 +93,17 @@ def estimate_centering(uploaded_file):
     if card_width <= 0 or card_height <= 0:
         return 0.0
 
-    horizontal_ratio = min(left_border, len(gray[0]) - right_border) / card_width
-    vertical_ratio = min(top_border, len(gray) - bottom_border) / card_height
+    left_margin = left_border
+    right_margin = len(gray[0]) - right_border
+    top_margin = top_border
+    bottom_margin = len(gray) - bottom_border
 
-    centering_ratio = min(horizontal_ratio, vertical_ratio)
+    horizontal_balance = min(left_margin, right_margin) / max(left_margin, right_margin)
+    vertical_balance = min(top_margin, bottom_margin) / max(top_margin, bottom_margin)
 
-    score = round(centering_ratio * 10, 2)
+    balance_ratio = min(horizontal_balance, vertical_balance)
+
+    score = round(balance_ratio * 10, 2)
 
     return score
 
@@ -135,7 +140,6 @@ st.markdown("### PSA Status")
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
 
 psa_actual_grade = None
-
 if psa_is_graded:
     psa_actual_grade = st.number_input(
         "Enter PSA Actual Grade",
@@ -144,9 +148,8 @@ if psa_is_graded:
         step=0.5
     )
 
-st.markdown("### Card Condition Inputs")
+st.markdown("### Other Condition Inputs")
 
-centering_input = st.slider("Centering (1-10)", 1, 10, 9)
 corners_input = st.slider("Corners (1-10)", 1, 10, 9)
 edges_input = st.slider("Edges (1-10)", 1, 10, 9)
 surface_input = st.slider("Surface (1-10)", 1, 10, 9)
@@ -179,11 +182,13 @@ if st.button("Run Pre-Screen Analysis"):
         quality_penalty = 0
         if overall_quality < 80:
             quality_penalty = 0.3
+
+        # FULLY AUTOMATIC CENTERING
         auto_centering_score = estimate_centering(front)
-        
-        # Weighted grading
+
+        # Weighted grading (centering is now fully automatic)
         weighted_grade = (
-            centering_input * 0.35
+            auto_centering_score * 0.35
             + corners_input * 0.25
             + edges_input * 0.20
             + surface_input * 0.20
@@ -197,7 +202,7 @@ if st.button("Run Pre-Screen Analysis"):
 
         # Grade ceiling
         lowest_component = min(
-            centering_input,
+            auto_centering_score,
             corners_input,
             edges_input,
             surface_input
@@ -213,7 +218,7 @@ if st.button("Run Pre-Screen Analysis"):
 
         # Confidence
         component_variance = np.var([
-            centering_input,
+            auto_centering_score,
             corners_input,
             edges_input,
             surface_input
@@ -223,7 +228,7 @@ if st.button("Run Pre-Screen Analysis"):
 
         # Elite override
         if (
-            centering_input == 10 and
+            auto_centering_score >= 9.8 and
             corners_input == 10 and
             edges_input == 10 and
             surface_input == 10 and
@@ -264,28 +269,23 @@ if st.button("Run Pre-Screen Analysis"):
 
         requests.post(
             f"{STORAGE_URL}/card-images/{front_filename}",
-            headers={
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "image/jpeg"
-            },
+            headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
             data=front_bytes
         )
 
         requests.post(
             f"{STORAGE_URL}/card-images/{back_filename}",
-            headers={
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "image/jpeg"
-            },
+            headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
             data=back_bytes
         )
 
         front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
         back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
-        # Display results
+        # Display
         st.subheader("Pre-Screen Report")
         st.markdown(f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>", unsafe_allow_html=True)
+        st.write(f"Auto Centering Score: {auto_centering_score}")
         st.write(f"Confidence Interval ±{std}")
 
         st.write("### Grade Probability")
@@ -301,7 +301,7 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Save to DB
+        # Save
         data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
@@ -332,7 +332,7 @@ if st.button("Run Pre-Screen Analysis"):
             st.success("Submission saved to database.")
         else:
             st.error(f"Database error: {response.text}")
-            # ===============================
+# ===============================
 # ADMIN ANALYTICS PANEL
 # ===============================
 
@@ -349,18 +349,15 @@ if user_email == "Adaml":
 
         if len(records) == 0:
             st.write("No submissions yet.")
-
         else:
-            import pandas as pd
 
             df = pd.DataFrame(records)
 
-            # ===============================
+            # ---------------------------
             # Prediction Error Tracking
-            # ===============================
+            # ---------------------------
 
             if "psa_actual_grade" in df.columns:
-
                 df_with_actual = df.dropna(subset=["psa_actual_grade"])
 
                 if len(df_with_actual) > 0:
@@ -385,9 +382,9 @@ if user_email == "Adaml":
                     st.subheader("Prediction Error Distribution")
                     st.bar_chart(df_with_actual["prediction_error"])
 
-            # ===============================
+            # ---------------------------
             # Summary Metrics
-            # ===============================
+            # ---------------------------
 
             st.subheader("Summary Metrics")
 
@@ -395,6 +392,7 @@ if user_email == "Adaml":
             st.write("Average Predicted Grade:", round(df["predicted_grade"].mean(), 2))
             st.write("Average Expected Value:", round(df["expected_value"].mean(), 2))
             st.write("Average Image Quality Score:", round(df["image_quality_score"].mean(), 2))
+            st.write("Average Auto Centering Score:", round(df["auto_centering_score"].mean(), 2))
 
             if "psa_actual_grade" in df.columns:
                 st.write(
