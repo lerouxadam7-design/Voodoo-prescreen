@@ -135,6 +135,7 @@ fee = st.number_input("Grading Fee", value=25.0)
 st.markdown("### PSA Status")
 
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
+slab_mode = st.checkbox("Is this card in a slab holder?")
 
 psa_actual_grade = None
 if psa_is_graded:
