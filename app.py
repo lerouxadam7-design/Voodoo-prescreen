@@ -3,12 +3,13 @@ import numpy as np
 import requests
 from datetime import datetime
 import pandas as pd
+import uuid
 
 # ===============================
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.6-beta"
+MODEL_VERSION = "v1.7-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -74,7 +75,7 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Upload both images.")
         st.stop()
 
-    # -------- Call Centering API --------
+    # -------- Centering API Call --------
     response = requests.post(
         CENTERING_API_URL,
         files={"file": front.getvalue()}
@@ -113,6 +114,7 @@ if st.button("Run Pre-Screen Analysis"):
     if mean > 9:
         mean = 9 + (mean - 9) * 0.4
 
+    # -------- Probability --------
     def normal_pdf(x, mu, sigma):
         return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -132,8 +134,8 @@ if st.button("Run Pre-Screen Analysis"):
         + prob9 * psa9
         + prob8 * psa8
     ) - fee
-# Upload images to Supabase Storage
 
+    # -------- Upload Images to Supabase Storage --------
     unique_id = str(uuid.uuid4())
 
     front_filename = f"{unique_id}_front.jpg"
@@ -143,20 +145,19 @@ if st.button("Run Pre-Screen Analysis"):
         f"{STORAGE_URL}/card-images/{front_filename}",
         headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
         data=front.getvalue()
-)
+    )
 
-requests.post(
-    
-f"{STORAGE_URL}/card-images/{back_filename}",
-    headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-    data=back.getvalue()
-)
+    requests.post(
+        f"{STORAGE_URL}/card-images/{back_filename}",
+        headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+        data=back.getvalue()
+    )
 
-front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
-back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
+    front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
+    back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
-    # -------- Save to Supabase --------
-data = {
+    # -------- Save Submission --------
+    data = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
         "psa10_value": psa10,
@@ -178,17 +179,18 @@ data = {
         "back_image_url": back_url,
         "created_at": str(datetime.now())
     }
-save_response = requests.post(TABLE_URL, json=data, headers=headers)
 
-if save_response.status_code == 201:
-    st.success("Submission saved to database.")
-else:
-    st.error(f"Database error: {save_response.text}")
+    save_response = requests.post(TABLE_URL, json=data, headers=headers)
+
+    if save_response.status_code == 201:
+        st.success("Submission saved.")
+    else:
+        st.error(f"Database error: {save_response.text}")
 
     # -------- Display --------
     st.subheader("Pre-Screen Report")
     st.write("Raw Centering Score:", raw_centering_score)
-    st.write("Auto Centering Used:", auto_centering_score)
+    st.write("Centering Used in Grade:", auto_centering_score)
     st.write("Predicted Grade:", mean)
     st.write("PSA 10 Probability:", round(prob10 * 100, 1), "%")
     st.write("PSA 9 Probability:", round(prob9 * 100, 1), "%")
