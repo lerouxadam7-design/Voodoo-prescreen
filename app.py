@@ -10,7 +10,7 @@ import pandas as pd
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.3-beta"
+MODEL_VERSION = "v1.4-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -25,11 +25,15 @@ headers = {
 }
 
 # ===============================
-# INVITE ONLY ACCESS
+# INVITE ONLY
 # ===============================
 
 AUTHORIZED_USERS = [
     "Adaml"
+    "Cale"
+    "Keith"
+    "Grant"
+    "Brooks"
 ]
 
 user_email = st.text_input("Enter Access Email")
@@ -68,17 +72,14 @@ def validate_image_quality(uploaded_file):
     return True, "Image passed quality checks.", quality_score
 
 # ===============================
-# AUTO CENTERING
+# AUTO CENTERING (WITH SLAB CROP)
 # ===============================
 
-def estimate_centering(uploaded_file):
+def estimate_centering(uploaded_file, slab_mode):
 
     image = Image.open(uploaded_file)
     image_array = np.array(image)
 
-    # ===============================
-    # Slab cropping (if slab mode)
-    # ===============================
     if slab_mode:
         h, w = image_array.shape[:2]
         crop_margin_h = int(h * 0.10)
@@ -93,22 +94,15 @@ def estimate_centering(uploaded_file):
 
     height, width = gray.shape
 
-    # Split image into left and right halves
     left_half = gray[:, :width // 2]
     right_half = gray[:, width // 2:]
-
-    # Flip right half for symmetry comparison
     right_half_flipped = np.fliplr(right_half)
 
-    # Resize to match dimensions if needed
     min_width = min(left_half.shape[1], right_half_flipped.shape[1])
     left_half = left_half[:, :min_width]
     right_half_flipped = right_half_flipped[:, :min_width]
 
-    # Compute symmetry difference
     diff = np.mean(np.abs(left_half - right_half_flipped))
-
-    # Normalize difference
     normalized_diff = diff / 255
 
     symmetry_score = 1 - normalized_diff
@@ -139,6 +133,11 @@ stock_type = st.selectbox(
     "Stock Type",
     ["paper", "chrome", "refractor", "foil", "other"]
 )
+
+psa10 = st.number_input("PSA 10 Value", value=100.0)
+psa9 = st.number_input("PSA 9 Value", value=50.0)
+psa8 = st.number_input("PSA 8 Value", value=20.0)
+fee = st.number_input("Grading Fee", value=25.0)
 
 st.markdown("### PSA Status")
 
@@ -186,31 +185,23 @@ if st.button("Run Pre-Screen Analysis"):
         overall_quality = min(quality_front, quality_back)
 
         quality_penalty = 0
+        if not slab_mode and overall_quality < 80:
+            quality_penalty = 0.3
 
-        # Only apply quality penalty if NOT slab mode
-        if not slab_mode:
-            if overall_quality < 80:
-                quality_penalty = 0.3
-
-        # FULLY AUTOMATIC CENTERING
-        auto_centering_score = estimate_centering(front)
-
-        # Weighted grading (centering is now fully automatic)
+        auto_centering_score = estimate_centering(front, slab_mode)
 
         weighted_grade = (
             auto_centering_score * 0.35
             + corners_input * 0.25
             + edges_input * 0.20
             + surface_input * 0.20
-)
+        )
 
         mean = round(weighted_grade, 2)
 
-        # Top-end compression
         if mean > 9:
             mean = 9 + (mean - 9) * 0.4
 
-        # Grade ceiling
         lowest_component = min(
             auto_centering_score,
             corners_input,
@@ -226,7 +217,6 @@ if st.button("Run Pre-Screen Analysis"):
 
         mean = max(mean - quality_penalty, 1)
 
-        # Confidence
         component_variance = np.var([
             auto_centering_score,
             corners_input,
@@ -236,7 +226,6 @@ if st.button("Run Pre-Screen Analysis"):
 
         std = round(0.25 + component_variance * 0.1, 2)
 
-        # Elite override
         if (
             auto_centering_score >= 9.8 and
             corners_input == 10 and
@@ -246,7 +235,6 @@ if st.button("Run Pre-Screen Analysis"):
         ):
             mean = 10
 
-        # Gaussian probability
         def normal_pdf(x, mu, sigma):
             return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -262,7 +250,12 @@ if st.button("Run Pre-Screen Analysis"):
         prob9 /= total
         prob8 /= total
 
-        # Upload images
+        ev = (
+            prob10 * psa10
+            + prob9 * psa9
+            + prob8 * psa8
+        ) - fee
+
         front_bytes = front.read()
         back_bytes = back.read()
 
@@ -286,7 +279,6 @@ if st.button("Run Pre-Screen Analysis"):
         front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
         back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
-        # Display
         st.subheader("Pre-Screen Report")
         st.markdown(f"<h2 style='color:#C9A44D;'>{round(mean,2)}</h2>", unsafe_allow_html=True)
         st.write(f"Auto Centering Score: {auto_centering_score}")
@@ -305,14 +297,18 @@ if st.button("Run Pre-Screen Analysis"):
         else:
             st.error(f"Projected Loss: -${abs(round(ev,2))}")
 
-        # Save
         data = {
             "manufacturer": manufacturer,
             "stock_type": stock_type,
+            "psa10_value": psa10,
+            "psa9_value": psa9,
+            "psa8_value": psa8,
+            "grading_fee": fee,
             "predicted_grade": round(mean,2),
             "prob_10": prob10,
             "prob_9": prob9,
             "prob_8_or_lower": prob8,
+            "expected_value": ev,
             "confidence_interval": std,
             "model_version": MODEL_VERSION,
             "submitted_by": user_email,
@@ -321,8 +317,8 @@ if st.button("Run Pre-Screen Analysis"):
             "front_image_url": front_url,
             "back_image_url": back_url,
             "psa_is_graded": psa_is_graded,
-            "slab_mode": slab_mode,
             "psa_actual_grade": psa_actual_grade,
+            "slab_mode": slab_mode,
             "created_at": str(datetime.now())
         }
 
@@ -354,7 +350,7 @@ if user_email == "Adaml":
             df = pd.DataFrame(records)
 
             # ---------------------------
-            # Prediction Error Tracking
+            # Prediction Accuracy
             # ---------------------------
 
             if "psa_actual_grade" in df.columns:
@@ -382,35 +378,27 @@ if user_email == "Adaml":
                     st.subheader("Prediction Error Distribution")
                     st.bar_chart(df_with_actual["prediction_error"])
 
-            # ===============================
-            # Bias by Stock Type
-            # ===============================
+                    # Bias by stock type
+                    st.subheader("Bias by Stock Type")
+                    stock_bias = (
+                        df_with_actual
+                        .groupby("stock_type")
+                        .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
+                    )
+                    st.bar_chart(stock_bias)
 
-            if len(df_with_actual) > 0:
+                    # Bias by manufacturer
+                    st.subheader("Bias by Manufacturer")
+                    manufacturer_bias = (
+                        df_with_actual
+                        .groupby("manufacturer")
+                        .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
+                    )
+                    st.bar_chart(manufacturer_bias)
 
-                st.subheader("Bias by Stock Type")
-
-                stock_bias = (
-                    df_with_actual
-                    .groupby("stock_type")
-                    .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
-                )
-
-                st.bar_chart(stock_bias)
-
-                st.subheader("Bias by Manufacturer")
-
-                manufacturer_bias = (
-                    df_with_actual
-                    .groupby("manufacturer")
-                    .apply(lambda x: (x["predicted_grade"] - x["psa_actual_grade"]).mean())
-                )
-
-                st.bar_chart(manufacturer_bias)
-
-            # ===============================
+            # ---------------------------
             # Summary Metrics
-            # ===============================
+            # ---------------------------
 
             st.subheader("Summary Metrics")
 
@@ -426,9 +414,9 @@ if user_email == "Adaml":
                     round(df["psa_actual_grade"].dropna().mean(), 2)
                 )
 
-            # ===============================
+            # ---------------------------
             # Distributions
-            # ===============================
+            # ---------------------------
 
             st.subheader("Predicted Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
@@ -438,6 +426,9 @@ if user_email == "Adaml":
 
             st.subheader("Submissions by User")
             st.bar_chart(df["submitted_by"].value_counts())
+
+            st.subheader("Slab Mode Distribution")
+            st.bar_chart(df["slab_mode"].value_counts())
 
             st.subheader("Image Quality Distribution")
             st.bar_chart(df["image_quality_score"].value_counts())
