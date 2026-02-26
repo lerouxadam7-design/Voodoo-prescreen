@@ -127,11 +127,6 @@ stock_type = st.selectbox(
     ["paper", "chrome", "refractor", "foil", "other"]
 )
 
-psa10 = st.number_input("PSA 10 Value", value=100.0)
-psa9 = st.number_input("PSA 9 Value", value=50.0)
-psa8 = st.number_input("PSA 8 Value", value=20.0)
-fee = st.number_input("Grading Fee", value=25.0)
-
 st.markdown("### PSA Status")
 
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
