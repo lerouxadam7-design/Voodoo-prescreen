@@ -71,7 +71,7 @@ def validate_image_quality(uploaded_file):
 # AUTO CENTERING
 # ===============================
 
-    def estimate_centering(uploaded_file):
+def estimate_centering(uploaded_file):
 
     image = Image.open(uploaded_file)
     image_array = np.array(image)
