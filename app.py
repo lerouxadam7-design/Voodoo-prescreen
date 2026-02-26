@@ -179,10 +179,10 @@ data = {
     }
 save_response = requests.post(TABLE_URL, json=data, headers=headers)
 
-    if save_response.status_code == 201:
-        st.success("Submission saved to database.")
-    else:
-        st.error(f"Database error: {save_response.text}")
+        if save_response.status_code == 201:
+            st.success("Submission saved to database.")
+        else:
+            st.error(f"Database error: {save_response.text}")
 
     # -------- Display --------
     st.subheader("Pre-Screen Report")
