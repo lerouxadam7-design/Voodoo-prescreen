@@ -177,7 +177,7 @@ data = {
         "back_image_url": back_url,
         "created_at": str(datetime.now())
     }
-    save_response = requests.post(TABLE_URL, json=data, headers=headers)
+save_response = requests.post(TABLE_URL, json=data, headers=headers)
 
     if save_response.status_code == 201:
         st.success("Submission saved to database.")
