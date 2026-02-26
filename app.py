@@ -178,8 +178,11 @@ if st.button("Run Pre-Screen Analysis"):
         overall_quality = min(quality_front, quality_back)
 
         quality_penalty = 0
-        if overall_quality < 80:
-            quality_penalty = 0.3
+
+        # Only apply quality penalty if NOT slab mode
+        if not slab_mode:
+            if overall_quality < 80:
+                quality_penalty = 0.3
 
         # FULLY AUTOMATIC CENTERING
         auto_centering_score = estimate_centering(front)
@@ -321,6 +324,7 @@ if st.button("Run Pre-Screen Analysis"):
             "front_image_url": front_url,
             "back_image_url": back_url,
             "psa_is_graded": psa_is_graded,
+            "slab_mode": slab_mode,
             "psa_actual_grade": psa_actual_grade,
             "created_at": str(datetime.now())
         }
