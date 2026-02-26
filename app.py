@@ -2,15 +2,13 @@ import streamlit as st
 import numpy as np
 import requests
 from datetime import datetime
-from PIL import Image
-import uuid
 import pandas as pd
 
 # ===============================
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.5-beta"
+MODEL_VERSION = "v1.6-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -25,11 +23,11 @@ headers = {
     "Content-Type": "application/json"
 }
 
+AUTHORIZED_USERS = ["Adaml"]
+
 # ===============================
 # ACCESS CONTROL
 # ===============================
-
-AUTHORIZED_USERS = ["Adaml"]
 
 user_email = st.text_input("Enter Access Email")
 
@@ -76,12 +74,11 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Upload both images.")
         st.stop()
 
-    # -----------------------------
-    # Call Centering API
-    # -----------------------------
-
-    files = {"file": front.getvalue()}
-    response = requests.post(CENTERING_API_URL, files={"file": front})
+    # -------- Call Centering API --------
+    response = requests.post(
+        CENTERING_API_URL,
+        files={"file": front.getvalue()}
+    )
 
     if response.status_code != 200:
         st.error("Centering API failed.")
@@ -90,29 +87,20 @@ if st.button("Run Pre-Screen Analysis"):
     centering_result = response.json()
 
     if "error" in centering_result:
-        auto_centering_score = 5.0  # neutral fallback
+        raw_centering_score = 5.0
     else:
         h_ratio = float(centering_result["horizontal_ratio"])
         v_ratio = float(centering_result["vertical_ratio"])
-
         combined_ratio = (h_ratio + v_ratio) / 2
         raw_centering_score = round(combined_ratio * 10, 2)
 
-        # Temporary stabilization for slab images
-        if psa_is_graded:
-            auto_centering_score = 8.8  # neutral high baseline for slabs
-        else:
-            auto_centering_score = raw_centering_score
+    # Freeze slab centering influence temporarily
+    if psa_is_graded:
+        auto_centering_score = 8.8
+    else:
+        auto_centering_score = raw_centering_score
 
-    # Use average instead of min to avoid collapse when one axis is zero
-    combined_ratio = (h_ratio + v_ratio) / 2
-
-    auto_centering_score = round(combined_ratio * 10, 2)
-
-    # -----------------------------
-    # Grading Logic
-    # -----------------------------
-
+    # -------- Grading Logic --------
     weighted_grade = (
         auto_centering_score * 0.35
         + corners_input * 0.25
@@ -125,7 +113,6 @@ if st.button("Run Pre-Screen Analysis"):
     if mean > 9:
         mean = 9 + (mean - 9) * 0.4
 
-    # Probability
     def normal_pdf(x, mu, sigma):
         return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -146,19 +133,79 @@ if st.button("Run Pre-Screen Analysis"):
         + prob8 * psa8
     ) - fee
 
-    # -----------------------------
-    # Display
-    # -----------------------------
+    # -------- Save to Supabase --------
+    data = {
+        "manufacturer": manufacturer,
+        "stock_type": stock_type,
+        "psa10_value": psa10,
+        "psa9_value": psa9,
+        "psa8_value": psa8,
+        "grading_fee": fee,
+        "predicted_grade": mean,
+        "prob_10": float(prob10),
+        "prob_9": float(prob9),
+        "prob_8_or_lower": float(prob8),
+        "expected_value": float(ev),
+        "model_version": MODEL_VERSION,
+        "submitted_by": user_email,
+        "auto_centering_score": auto_centering_score,
+        "raw_centering_score": raw_centering_score,
+        "psa_is_graded": psa_is_graded,
+        "psa_actual_grade": psa_actual_grade,
+        "created_at": str(datetime.now())
+    }
 
+    requests.post(TABLE_URL, json=data, headers=headers)
+
+    # -------- Display --------
     st.subheader("Pre-Screen Report")
-    st.write("Auto Centering Score:", auto_centering_score)
-    st.write("Final Predicted Grade:", round(mean, 2))
-
+    st.write("Raw Centering Score:", raw_centering_score)
+    st.write("Auto Centering Used:", auto_centering_score)
+    st.write("Predicted Grade:", mean)
     st.write("PSA 10 Probability:", round(prob10 * 100, 1), "%")
     st.write("PSA 9 Probability:", round(prob9 * 100, 1), "%")
     st.write("PSA ≤8 Probability:", round(prob8 * 100, 1), "%")
 
-    if ev > 0:
-        st.success(f"Projected Profit: +${round(ev, 2)}")
-    else:
-        st.error(f"Projected Loss: -${abs(round(ev, 2))}")
+# ===============================
+# ADMIN PANEL
+# ===============================
+
+if user_email == "Adaml":
+
+    st.divider()
+    st.header("Admin Analytics Dashboard")
+
+    analytics_response = requests.get(TABLE_URL, headers=headers)
+
+    if analytics_response.status_code == 200:
+        df = pd.DataFrame(analytics_response.json())
+
+        if len(df) > 0:
+
+            if "psa_actual_grade" in df.columns:
+                df_with_actual = df.dropna(subset=["psa_actual_grade"])
+
+                if len(df_with_actual) > 0:
+                    df_with_actual["prediction_error"] = (
+                        df_with_actual["predicted_grade"]
+                        - df_with_actual["psa_actual_grade"]
+                    )
+
+                    st.subheader("Prediction Accuracy")
+                    st.write("MAE:",
+                             round(abs(df_with_actual["prediction_error"]).mean(), 2))
+                    st.write("Bias:",
+                             round(df_with_actual["prediction_error"].mean(), 2))
+
+            st.subheader("Summary Metrics")
+            st.write("Total Submissions:", len(df))
+            st.write("Average Predicted Grade:",
+                     round(df["predicted_grade"].mean(), 2))
+            st.write("Average Raw Centering:",
+                     round(df["raw_centering_score"].mean(), 2))
+
+            st.subheader("Grade Distribution")
+            st.bar_chart(df["predicted_grade"].value_counts().sort_index())
+
+            st.subheader("Raw Data")
+            st.dataframe(df)
