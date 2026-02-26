@@ -71,41 +71,38 @@ def validate_image_quality(uploaded_file):
 # AUTO CENTERING
 # ===============================
 
-def estimate_centering(uploaded_file):
+    def estimate_centering(uploaded_file):
 
     image = Image.open(uploaded_file)
     image_array = np.array(image)
 
     gray = np.mean(image_array, axis=2)
 
-    col_gradient = np.abs(np.diff(np.mean(gray, axis=0)))
-    row_gradient = np.abs(np.diff(np.mean(gray, axis=1)))
+    height, width = gray.shape
 
-    left_border = np.argmax(col_gradient[:len(col_gradient)//2])
-    right_border = len(col_gradient) - np.argmax(col_gradient[::-1][:len(col_gradient)//2])
+    # Split image into left and right halves
+    left_half = gray[:, :width // 2]
+    right_half = gray[:, width // 2:]
 
-    top_border = np.argmax(row_gradient[:len(row_gradient)//2])
-    bottom_border = len(row_gradient) - np.argmax(row_gradient[::-1][:len(row_gradient)//2])
+    # Flip right half for symmetry comparison
+    right_half_flipped = np.fliplr(right_half)
 
-    card_width = right_border - left_border
-    card_height = bottom_border - top_border
+    # Resize to match dimensions if needed
+    min_width = min(left_half.shape[1], right_half_flipped.shape[1])
+    left_half = left_half[:, :min_width]
+    right_half_flipped = right_half_flipped[:, :min_width]
 
-    if card_width <= 0 or card_height <= 0:
-        return 0.0
+    # Compute symmetry difference
+    diff = np.mean(np.abs(left_half - right_half_flipped))
 
-    left_margin = left_border
-    right_margin = len(gray[0]) - right_border
-    top_margin = top_border
-    bottom_margin = len(gray) - bottom_border
+    # Normalize difference
+    normalized_diff = diff / 255
 
-    horizontal_balance = min(left_margin, right_margin) / max(left_margin, right_margin)
-    vertical_balance = min(top_margin, bottom_margin) / max(top_margin, bottom_margin)
+    symmetry_score = 1 - normalized_diff
 
-    balance_ratio = min(horizontal_balance, vertical_balance)
+    score = round(symmetry_score * 10, 2)
 
-    score = round(balance_ratio * 10, 2)
-
-    return score
+    return max(min(score, 10), 0)
 
 # ===============================
 # UI
