@@ -136,8 +136,8 @@ if st.button("Run Pre-Screen Analysis"):
 
     unique_id = str(uuid.uuid4())
 
-front_filename = f"{unique_id}_front.jpg"
-back_filename = f"{unique_id}_back.jpg"
+    front_filename = f"{unique_id}_front.jpg"
+    back_filename = f"{unique_id}_back.jpg"
 
 requests.post(
     f"{STORAGE_URL}/card-images/{front_filename}",
