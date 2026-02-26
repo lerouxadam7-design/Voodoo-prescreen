@@ -92,9 +92,13 @@ if st.button("Run Pre-Screen Analysis"):
     if "error" in centering_result:
         auto_centering_score = 5.0  # neutral fallback
     else:
-        h_ratio = centering_result["horizontal_ratio"]
-        v_ratio = centering_result["vertical_ratio"]
-        auto_centering_score = round(min(h_ratio, v_ratio) * 10, 2)
+        h_ratio = float(centering_result["horizontal_ratio"])
+        v_ratio = float(centering_result["vertical_ratio"])
+
+    # Use average instead of min to avoid collapse when one axis is zero
+    combined_ratio = (h_ratio + v_ratio) / 2
+
+    auto_centering_score = round(combined_ratio * 10, 2)
 
     # -----------------------------
     # Grading Logic
