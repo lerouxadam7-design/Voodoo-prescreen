@@ -134,7 +134,7 @@ if st.button("Run Pre-Screen Analysis"):
     ) - fee
 # Upload images to Supabase Storage
 
-unique_id = str(uuid.uuid4())
+    unique_id = str(uuid.uuid4())
 
 front_filename = f"{unique_id}_front.jpg"
 back_filename = f"{unique_id}_back.jpg"
