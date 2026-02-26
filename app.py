@@ -10,8 +10,6 @@ import pandas as pd
 # CENTERING ENGINE CLASSES
 # ===============================
 
-class ProfessionalCenteringEngineV68:
-
     def __init__(self):
         self.glare = GlareDetector()
         self.confidence = ConfidenceScorer()
@@ -177,17 +175,6 @@ if st.button("Run Pre-Screen Analysis"):
     if not front or not back:
         st.error("Upload both images.")
         st.stop()
-
-    file_bytes = np.asarray(bytearray(front.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    result = centering_engine.analyze_array(image)
-
-    if "error" in result:
-        st.error("Centering detection failed.")
-        st.stop()
-
-    auto_centering_score = round(min(result["horizontal_ratio"], result["vertical_ratio"]) * 10, 2)
 
     weighted_grade = (
         auto_centering_score * 0.35
