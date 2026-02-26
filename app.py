@@ -5,51 +5,10 @@ from datetime import datetime
 from PIL import Image
 import uuid
 import pandas as pd
-import cv2
 
 # ===============================
 # CENTERING ENGINE CLASSES
 # ===============================
-
-class GlareDetector:
-    def detect_glare_mask(self, image):
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        _, s, v = cv2.split(hsv)
-        bright = v > 230
-        low_sat = s < 40
-        overexposed = np.logical_or.reduce([
-            image[:, :, 0] > 240,
-            image[:, :, 1] > 240,
-            image[:, :, 2] > 240
-        ])
-        glare = np.logical_or(np.logical_and(bright, low_sat), overexposed)
-        mask = np.uint8(glare) * 255
-        kernel = np.ones((5, 5), np.uint8)
-        return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-    def inpaint(self, image, mask):
-        return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
-
-
-class ConfidenceScorer:
-    def line_consistency(self, lines):
-        if lines is None or len(lines) == 0:
-            return 0.0
-        slopes = []
-        for x1, y1, x2, y2 in lines:
-            dx = x2 - x1
-            dy = y2 - y1
-            slopes.append(999 if dx == 0 else dy / dx)
-        variance = np.var(slopes)
-        return 1.0 - min(variance * 5, 1.0)
-
-    def glare_penalty(self, mask):
-        ratio = np.sum(mask == 255) / mask.size
-        return 1.0 - min(ratio * 2.0, 1.0)
-
-    def compute(self, consistency, glare_score):
-        return round((0.6 * consistency + 0.4 * glare_score) * 100, 2)
-
 
 class ProfessionalCenteringEngineV68:
 
