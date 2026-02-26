@@ -95,6 +95,15 @@ if st.button("Run Pre-Screen Analysis"):
         h_ratio = float(centering_result["horizontal_ratio"])
         v_ratio = float(centering_result["vertical_ratio"])
 
+        combined_ratio = (h_ratio + v_ratio) / 2
+        raw_centering_score = round(combined_ratio * 10, 2)
+
+        # Temporary stabilization for slab images
+        if psa_is_graded:
+            auto_centering_score = 8.8  # neutral high baseline for slabs
+        else:
+            auto_centering_score = raw_centering_score
+
     # Use average instead of min to avoid collapse when one axis is zero
     combined_ratio = (h_ratio + v_ratio) / 2
 
