@@ -184,14 +184,13 @@ if st.button("Run Pre-Screen Analysis"):
         auto_centering_score = estimate_centering(front)
 
         # Weighted grading (centering is now fully automatic)
-        blended_centering = (auto_centering_score * 0.6) + (centering_input * 0.4)
 
         weighted_grade = (
-        blended_centering * 0.35
-        + corners_input * 0.25
-        + edges_input * 0.20
-        + surface_input * 0.20
-        )
+            auto_centering_score * 0.35
+            + corners_input * 0.25
+            + edges_input * 0.20
+            + surface_input * 0.20
+)
 
         mean = round(weighted_grade, 2)
 
