@@ -30,10 +30,6 @@ headers = {
 
 AUTHORIZED_USERS = [
     "Adaml"
-    "Cale"
-    "Keith"
-    "Grant"
-    "Brooks"
 ]
 
 user_email = st.text_input("Enter Access Email")
