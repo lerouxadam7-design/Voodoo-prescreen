@@ -112,7 +112,7 @@ if st.button("Run Pre-Screen Analysis"):
     mean = round(weighted_grade, 2)
 
     if mean > 9:
-        mean = 9 + (mean - 9) * 0.4
+        mean = 9 + (mean - 9) * 0.6
 
     # -------- Probability --------
     def normal_pdf(x, mu, sigma):
