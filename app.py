@@ -139,10 +139,10 @@ if st.button("Run Pre-Screen Analysis"):
     front_filename = f"{unique_id}_front.jpg"
     back_filename = f"{unique_id}_back.jpg"
 
-requests.post(
-    f"{STORAGE_URL}/card-images/{front_filename}",
-    headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-    data=front.getvalue()
+    requests.post(
+        f"{STORAGE_URL}/card-images/{front_filename}",
+        headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+        data=front.getvalue()
 )
 
 requests.post(
