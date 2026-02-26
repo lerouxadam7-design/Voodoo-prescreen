@@ -76,6 +76,19 @@ def estimate_centering(uploaded_file):
     image = Image.open(uploaded_file)
     image_array = np.array(image)
 
+    # ===============================
+    # Slab cropping (if slab mode)
+    # ===============================
+    if slab_mode:
+        h, w = image_array.shape[:2]
+        crop_margin_h = int(h * 0.10)
+        crop_margin_w = int(w * 0.10)
+
+        image_array = image_array[
+            crop_margin_h:h - crop_margin_h,
+            crop_margin_w:w - crop_margin_w
+        ]
+
     gray = np.mean(image_array, axis=2)
 
     height, width = gray.shape
