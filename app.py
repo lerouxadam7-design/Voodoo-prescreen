@@ -118,7 +118,7 @@ if st.button("Run Pre-Screen Analysis"):
         corners_input >= 9.5 and
         edges_input >= 9.5 and
         surface_input >= 9.5 and
-        mean >= 9.5
+        mean >= 9.3
     ):
         mean = 10.0
 
