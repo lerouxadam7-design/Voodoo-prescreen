@@ -457,62 +457,68 @@ if user_email == "Adaml":
             st.subheader("Raw Data")
             st.dataframe(df)
 
-            # ===============================
-            # RESCORE EXISTING SUBMISSIONS
-            # ===============================
+# ===============================
+# RESCORE EXISTING SUBMISSIONS
+# ===============================
 
-            st.markdown("<hr>", unsafe_allow_html=True)
-            st.subheader("Model Maintenance")
+st.markdown("<hr>", unsafe_allow_html=True)
+st.subheader("Model Maintenance")
 
-            if st.button("Re-Score All Existing Cards With Current Model"):
+if st.button("Re-Score All Existing Cards With Current Model"):
 
-                for _, row in df.iterrows():
+    for _, row in df.iterrows():
 
-                    center = row.get("auto_centering_score", 8.8)
-                    corners = row.get("corners_input", 9)
-                    edges = row.get("edges_input", 9)
-                    surface = row.get("surface_input", 9)
+        # --- Safe feature extraction ---
+        center = row.get("auto_centering_score", 8.8)
+        corners = row.get("corners_input", 9)
+        edges = row.get("edges_input", 9)
+        surface = row.get("surface_input", 9)
 
-                    weighted_grade = (
-                        center * 0.35
-                        + corners * 0.25
-                        + edges * 0.20
-                        + surface * 0.20
-            )
+        # --- Recalculate grade ---
+        weighted_grade = (
+            center * 0.35
+            + corners * 0.25
+            + edges * 0.20
+            + surface * 0.20
+        )
 
-                    mean = round(weighted_grade, 2)
+        mean = round(weighted_grade, 2)
 
-                    if mean > 9:
-                        mean = 9 + (mean - 9) * 0.6
+        if mean > 9:
+            mean = 9 + (mean - 9) * 0.6
 
-                    if (
-                        row["auto_centering_score"] >= 8.8 and
-                        row["corners_input"] >= 9.5 and
-                        row["edges_input"] >= 9.5 and
-                        row["surface_input"] >= 9.5 and
-                        mean >= 9.3
-                    ):
-                        mean = 10.0
+        if (
+            center >= 8.8 and
+            corners >= 9.5 and
+            edges >= 9.5 and
+            surface >= 9.5 and
+            mean >= 9.3
+        ):
+            mean = 10.0
 
-                    new_data = {
-                        "card_id": row["card_id"],
-                        "manufacturer": row["manufacturer"],
-                        "stock_type": row["stock_type"],
-                        "predicted_grade": mean,
-                        "model_version": MODEL_VERSION,
-                        "submitted_by": user_email,
-                        "auto_centering_score": row["auto_centering_score"],
-                        "raw_centering_score": row["raw_centering_score"],
-                        "corners_input": row["corners_input"],
-                        "edges_input": row["edges_input"],
-                        "surface_input": row["surface_input"],
-                        "psa_is_graded": row["psa_is_graded"],
-                        "psa_actual_grade": row["psa_actual_grade"],
-                        "front_image_url": row["front_image_url"],
-                        "back_image_url": row["back_image_url"],
-                        "created_at": str(datetime.now())
-                    }
+        # --- Ensure card_id exists ---
+        card_id = row.get("card_id", str(uuid.uuid4()))
 
-                    requests.post(TABLE_URL, json=new_data, headers=headers)
+        # --- Build new versioned row ---
+        new_data = {
+            "card_id": card_id,
+            "manufacturer": row.get("manufacturer"),
+            "stock_type": row.get("stock_type"),
+            "predicted_grade": mean,
+            "model_version": MODEL_VERSION,
+            "submitted_by": user_email,
+            "auto_centering_score": center,
+            "raw_centering_score": row.get("raw_centering_score"),
+            "corners_input": corners,
+            "edges_input": edges,
+            "surface_input": surface,
+            "psa_is_graded": row.get("psa_is_graded"),
+            "psa_actual_grade": row.get("psa_actual_grade"),
+            "front_image_url": row.get("front_image_url"),
+            "back_image_url": row.get("back_image_url"),
+            "created_at": str(datetime.now())
+        }
 
-                st.success("Re-score completed.")
+        requests.post(TABLE_URL, json=new_data, headers=headers)
+
+    st.success("Re-score completed.")
