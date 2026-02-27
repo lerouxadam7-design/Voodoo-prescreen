@@ -380,7 +380,7 @@ if st.button("Run Pre-Screen Analysis"):
 # ADMIN DASHBOARD
 # ===============================
 
-if user_email == "Adaml":
+if user_role == "admin":
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.header("Calibration Dashboard")
