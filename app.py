@@ -466,15 +466,24 @@ st.subheader("Model Maintenance")
 
 if st.button("Re-Score All Existing Cards With Current Model"):
 
+    # Helper to safely convert values
+    def safe_float(value, default):
+        try:
+            if value is None or pd.isna(value):
+                return float(default)
+            return float(value)
+        except:
+            return float(default)
+
     for _, row in df.iterrows():
 
-        # --- Safe feature extraction ---
-        center = row.get("auto_centering_score", 8.8)
-        corners = row.get("corners_input", 9)
-        edges = row.get("edges_input", 9)
-        surface = row.get("surface_input", 9)
+        # ---- Safe feature extraction ----
+        center = safe_float(row.get("auto_centering_score"), 8.8)
+        corners = safe_float(row.get("corners_input"), 9)
+        edges = safe_float(row.get("edges_input"), 9)
+        surface = safe_float(row.get("surface_input"), 9)
 
-        # --- Recalculate grade ---
+        # ---- Recalculate grade ----
         weighted_grade = (
             center * 0.35
             + corners * 0.25
@@ -484,9 +493,11 @@ if st.button("Re-Score All Existing Cards With Current Model"):
 
         mean = round(weighted_grade, 2)
 
+        # Top-end compression
         if mean > 9:
             mean = 9 + (mean - 9) * 0.6
 
+        # Elite 10 gate
         if (
             center >= 8.8 and
             corners >= 9.5 and
@@ -496,10 +507,12 @@ if st.button("Re-Score All Existing Cards With Current Model"):
         ):
             mean = 10.0
 
-        # --- Ensure card_id exists ---
-        card_id = row.get("card_id", str(uuid.uuid4()))
+        # ---- Ensure card_id exists ----
+        card_id = row.get("card_id")
+        if not card_id or pd.isna(card_id):
+            card_id = str(uuid.uuid4())
 
-        # --- Build new versioned row ---
+        # ---- Build new versioned submission ----
         new_data = {
             "card_id": card_id,
             "manufacturer": row.get("manufacturer"),
@@ -508,7 +521,7 @@ if st.button("Re-Score All Existing Cards With Current Model"):
             "model_version": MODEL_VERSION,
             "submitted_by": user_email,
             "auto_centering_score": center,
-            "raw_centering_score": row.get("raw_centering_score"),
+            "raw_centering_score": safe_float(row.get("raw_centering_score"), 5.0),
             "corners_input": corners,
             "edges_input": edges,
             "surface_input": surface,
@@ -521,4 +534,4 @@ if st.button("Re-Score All Existing Cards With Current Model"):
 
         requests.post(TABLE_URL, json=new_data, headers=headers)
 
-    st.success("Re-score completed.")
+    st.success("Re-score completed successfully.")
