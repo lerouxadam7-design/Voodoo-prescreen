@@ -137,7 +137,7 @@ div[data-baseweb="select"] > div {
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.9"
+MODEL_VERSION = "v1.9-locked"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -373,6 +373,8 @@ if user_email == "Adaml":
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.header("Calibration Dashboard")
+
+    st.info("Model v1.9-locked — No grading logic changes during data accumulation phase.")
 
     analytics_response = requests.get(TABLE_URL, headers=headers)
 
