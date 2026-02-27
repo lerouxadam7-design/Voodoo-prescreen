@@ -6,24 +6,23 @@ import pandas as pd
 import uuid
 
 # ===============================
-# BRAND STYLE (VOODOO THEME)
+# BRAND STYLE (VOODOO EXACT MATCH)
 # ===============================
 
 st.markdown("""
 <style>
 
-/* ===== FULL APP BACKGROUND ===== */
+/* ===== FULL BACKGROUND GRADIENT (LEFT → RIGHT) ===== */
 
 .stApp {
     background: linear-gradient(
         90deg,
-        #2E0F4D 0%,
-        #3F1668 50%,
-        #4E1F80 100%
+        #3F1D6A 0%,
+        #522C87 50%,
+        #5F3A96 100%
     ) !important;
 }
 
-/* Remove Streamlit white layers */
 [data-testid="stAppViewContainer"] {
     background: transparent !important;
 }
@@ -32,12 +31,12 @@ section.main > div {
     background: transparent !important;
 }
 
-/* Remove top toolbar color */
+/* Remove top header bar tint */
 [data-testid="stHeader"] {
     background: transparent !important;
 }
 
-/* ===== TYPOGRAPHY ===== */
+/* ===== HEADERS ===== */
 
 h1, h2, h3 {
     color: #C9A44D !important;
@@ -48,7 +47,7 @@ label {
     color: white !important;
 }
 
-/* ===== BUTTONS ===== */
+/* ===== BUTTON ===== */
 
 .stButton>button {
     background-color: #C9A44D !important;
@@ -66,13 +65,13 @@ div[data-baseweb="slider"] > div {
     background-color: rgba(255,255,255,0.25) !important;
 }
 
-/* Slider active bar */
+/* Slider bar (active fill) */
 div[data-baseweb="slider"] div[role="slider"] {
-    background-color: #C9A44D !important;
-    border: 2px solid white !important;
+    background-color: white !important;
+    border: 2px solid #C9A44D !important;
 }
 
-/* Slider text */
+/* Slider label text */
 .stSlider label {
     color: white !important;
 }
@@ -85,7 +84,7 @@ input, textarea {
     border-radius: 10px !important;
 }
 
-/* Select box */
+/* Select dropdown */
 div[data-baseweb="select"] > div {
     background-color: rgba(0,0,0,0.25) !important;
     color: white !important;
