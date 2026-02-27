@@ -6,6 +6,52 @@ import pandas as pd
 import uuid
 
 # ===============================
+# STYLE
+# ===============================
+
+st.markdown("""
+<style>
+body, .main {
+    background-color: #0E0E0E;
+}
+
+h1, h2, h3 {
+    color: #C9A44D;
+}
+
+hr {
+    border: 1px solid #333;
+}
+
+.stButton>button {
+    background-color: #C9A44D;
+    color: black;
+    font-weight: bold;
+    border-radius: 8px;
+    padding: 0.6em 1.2em;
+}
+
+.grade-box {
+    background-color: #1A1A1A;
+    padding: 25px;
+    border-radius: 14px;
+    text-align: center;
+    font-size: 42px;
+    font-weight: bold;
+    color: #C9A44D;
+    margin-bottom: 20px;
+}
+
+.section-box {
+    background-color: #161616;
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 15px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ===============================
 # CONFIG
 # ===============================
 
@@ -37,15 +83,30 @@ if user_email not in AUTHORIZED_USERS:
     st.stop()
 
 # ===============================
-# UI
+# HEADER
 # ===============================
 
-st.set_page_config(page_title="Voodoo Sports Grading")
-st.title("VOODOO SPORTS GRADING")
-st.subheader("PSA Pre-Screen Analyzer")
+st.markdown("<h1 style='text-align:center;'>VOODOO SPORTS GRADING</h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align:center;'>AI-Assisted PSA Pre-Screen</h3>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
 
-front = st.file_uploader("Upload Front Image", type=["jpg", "png"])
-back = st.file_uploader("Upload Back Image", type=["jpg", "png"])
+# ===============================
+# IMAGE UPLOAD
+# ===============================
+
+col1, col2 = st.columns(2)
+
+with col1:
+    front = st.file_uploader("Upload Front Image", type=["jpg", "png"])
+
+with col2:
+    back = st.file_uploader("Upload Back Image", type=["jpg", "png"])
+
+# ===============================
+# CARD INFO
+# ===============================
+
+st.markdown("<div class='section-box'>", unsafe_allow_html=True)
 
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
@@ -56,9 +117,19 @@ psa_actual_grade = (
     if psa_is_graded else None
 )
 
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ===============================
+# CONDITION INPUTS
+# ===============================
+
+st.markdown("<div class='section-box'>", unsafe_allow_html=True)
+
 corners_input = st.slider("Corners (1-10)", 1, 10, 9)
 edges_input = st.slider("Edges (1-10)", 1, 10, 9)
 surface_input = st.slider("Surface (1-10)", 1, 10, 9)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ===============================
 # RUN ANALYSIS
@@ -70,7 +141,6 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Upload both images.")
         st.stop()
 
-    # -------- Centering API Call --------
     response = requests.post(
         CENTERING_API_URL,
         files={"file": front.getvalue()}
@@ -90,13 +160,11 @@ if st.button("Run Pre-Screen Analysis"):
         combined_ratio = (h_ratio + v_ratio) / 2
         raw_centering_score = round(combined_ratio * 10, 2)
 
-    # Freeze slab centering influence temporarily
     if psa_is_graded:
         auto_centering_score = 8.8
     else:
         auto_centering_score = raw_centering_score
 
-    # -------- Grading Logic --------
     weighted_grade = (
         auto_centering_score * 0.35
         + corners_input * 0.25
@@ -108,6 +176,7 @@ if st.button("Run Pre-Screen Analysis"):
 
     if mean > 9:
         mean = 9 + (mean - 9) * 0.6
+
     if (
         auto_centering_score >= 8.8 and
         corners_input >= 9.5 and
@@ -117,7 +186,6 @@ if st.button("Run Pre-Screen Analysis"):
     ):
         mean = 10.0
 
-    # -------- Probability --------
     def normal_pdf(x, mu, sigma):
         return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -132,7 +200,27 @@ if st.button("Run Pre-Screen Analysis"):
     prob9 /= total
     prob8 /= total
 
-    # -------- Upload Images to Supabase Storage --------
+    # ===============================
+    # DISPLAY RESULTS
+    # ===============================
+
+    st.markdown("<div class='grade-box'>{}</div>".format(mean), unsafe_allow_html=True)
+
+    st.subheader("Grade Probability")
+
+    st.progress(float(prob10))
+    st.write(f"PSA 10: {round(prob10 * 100, 1)}%")
+
+    st.progress(float(prob9))
+    st.write(f"PSA 9: {round(prob9 * 100, 1)}%")
+
+    st.progress(float(prob8))
+    st.write(f"PSA ≤8: {round(prob8 * 100, 1)}%")
+
+    # ===============================
+    # SAVE TO SUPABASE
+    # ===============================
+
     unique_id = str(uuid.uuid4())
 
     front_filename = f"{unique_id}_front.jpg"
@@ -153,7 +241,6 @@ if st.button("Run Pre-Screen Analysis"):
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
-    # -------- Save Submission --------
     data = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
@@ -179,19 +266,12 @@ if st.button("Run Pre-Screen Analysis"):
     else:
         st.error(f"Database error: {save_response.text}")
 
-    # -------- Display --------
-    st.subheader("Pre-Screen Report")
-    st.write("Raw Centering Score:", raw_centering_score)
-    st.write("Centering Used in Grade:", auto_centering_score)
-    st.write("Predicted Grade:", mean)
-    st.write("PSA 10 Probability:", round(prob10 * 100, 1), "%")
-    st.write("PSA 9 Probability:", round(prob9 * 100, 1), "%")
-    st.write("PSA ≤8 Probability:", round(prob8 * 100, 1), "%")
-    st.write("Pre-gate mean:", mean)
-    st.write("Centering:", auto_centering_score)
-    st.write("Corners:", corners_input)
-    st.write("Edges:", edges_input)
-    st.write("Surface:", surface_input)
+    with st.expander("Debug Info"):
+        st.write("Raw Centering Score:", raw_centering_score)
+        st.write("Centering Used:", auto_centering_score)
+        st.write("Corners:", corners_input)
+        st.write("Edges:", edges_input)
+        st.write("Surface:", surface_input)
 
 # ===============================
 # ADMIN PANEL
@@ -199,8 +279,8 @@ if st.button("Run Pre-Screen Analysis"):
 
 if user_email == "Adaml":
 
-    st.divider()
-    st.header("Admin Analytics Dashboard")
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.header("Admin Analytics")
 
     analytics_response = requests.get(TABLE_URL, headers=headers)
 
@@ -223,13 +303,6 @@ if user_email == "Adaml":
                              round(abs(df_with_actual["prediction_error"]).mean(), 2))
                     st.write("Bias:",
                              round(df_with_actual["prediction_error"].mean(), 2))
-
-            st.subheader("Summary Metrics")
-            st.write("Total Submissions:", len(df))
-            st.write("Average Predicted Grade:",
-                     round(df["predicted_grade"].mean(), 2))
-            st.write("Average Raw Centering:",
-                     round(df["raw_centering_score"].mean(), 2))
 
             st.subheader("Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
