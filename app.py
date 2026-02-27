@@ -99,7 +99,7 @@ if user_email not in AUTHORIZED_USERS:
 
 st.set_page_config(page_title="Voodoo Sports Grading")
 
-st.image("logo.png", use_column_width=True)
+st.image("logo.png", width=800)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # ===============================
