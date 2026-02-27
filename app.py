@@ -468,12 +468,17 @@ if user_email == "Adaml":
 
                 for _, row in df.iterrows():
 
+                    center = row.get("auto_centering_score", 8.8)
+                    corners = row.get("corners_input", 9)
+                    edges = row.get("edges_input", 9)
+                    surface = row.get("surface_input", 9)
+
                     weighted_grade = (
-                        row["auto_centering_score"] * 0.35
-                        + row["corners_input"] * 0.25
-                        + row["edges_input"] * 0.20
-                        + row["surface_input"] * 0.20
-                    )
+                        center * 0.35
+                        + corners * 0.25
+                        + edges * 0.20
+                        + surface * 0.20
+            )
 
                     mean = round(weighted_grade, 2)
 
