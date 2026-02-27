@@ -470,82 +470,72 @@ if user_role == "admin":
             st.subheader("Raw Data")
             st.dataframe(df)
 
-# ===============================
-# RESCORE EXISTING SUBMISSIONS
-# ===============================
+            # ===============================
+            # RESCORE EXISTING SUBMISSIONS
+            # ===============================
 
-st.write(df.columns)
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Model Maintenance")
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.subheader("Model Maintenance")
 
-if st.button("Re-Score All Existing Cards With Current Model"):
+            if st.button("Re-Score All Existing Cards With Current Model"):
 
-    # Helper to safely convert values
-    def safe_float(value, default):
-        try:
-            if value is None or pd.isna(value):
-                return float(default)
-            return float(value)
-        except:
-            return float(default)
+                def safe_float(value, default):
+                    try:
+                        if value is None or pd.isna(value):
+                            return float(default)
+                        return float(value)
+                    except:
+                        return float(default)
 
-    for _, row in df.iterrows():
+                for _, row in df.iterrows():
 
-        # ---- Safe feature extraction ----
-        center = safe_float(row.get("auto_centering_score"), 8.8)
-        corners = safe_float(row.get("corners_input"), 9)
-        edges = safe_float(row.get("edges_input"), 9)
-        surface = safe_float(row.get("surface_input"), 9)
+                    center = safe_float(row.get("auto_centering_score"), 8.8)
+                    corners = safe_float(row.get("corners_input"), 9)
+                    edges = safe_float(row.get("edges_input"), 9)
+                    surface = safe_float(row.get("surface_input"), 9)
 
-        # ---- Recalculate grade ----
-        weighted_grade = (
-            center * 0.35
-            + corners * 0.25
-            + edges * 0.20
-            + surface * 0.20
-        )
+                    weighted_grade = (
+                        center * 0.35
+                        + corners * 0.25
+                        + edges * 0.20
+                        + surface * 0.20
+                    )
 
-        mean = round(weighted_grade, 2)
+                    mean = round(weighted_grade, 2)
 
-        # Top-end compression
-        if mean > 9:
-            mean = 9 + (mean - 9) * 0.6
+                    if mean > 9:
+                        mean = 9 + (mean - 9) * 0.6
 
-        # Elite 10 gate
-        if (
-            center >= 8.8 and
-            corners >= 9.5 and
-            edges >= 9.5 and
-            surface >= 9.5 and
-            mean >= 9.3
-        ):
-            mean = 10.0
+                    if (
+                        center >= 8.8 and
+                        corners >= 9.5 and
+                        edges >= 9.5 and
+                        surface >= 9.5 and
+                        mean >= 9.3
+                    ):
+                        mean = 10.0
 
-        # ---- Ensure card_id exists ----
-        card_id = row.get("card_id")
-        if not card_id or pd.isna(card_id):
-            card_id = str(uuid.uuid4())
+                    card_id = row.get("card_id") or str(uuid.uuid4())
 
-        # ---- Build new versioned submission ----
-        new_data = {
-            "card_id": card_id,
-            "manufacturer": row.get("manufacturer"),
-            "stock_type": row.get("stock_type"),
-            "predicted_grade": mean,
-            "model_version": MODEL_VERSION,
-            "submitted_by": user_email,
-            "auto_centering_score": center,
-            "raw_centering_score": safe_float(row.get("raw_centering_score"), 5.0),
-            "corners_input": corners,
-            "edges_input": edges,
-            "surface_input": surface,
-            "psa_is_graded": row.get("psa_is_graded"),
-            "psa_actual_grade": row.get("psa_actual_grade"),
-            "front_image_url": row.get("front_image_url"),
-            "back_image_url": row.get("back_image_url"),
-            "created_at": str(datetime.now())
-        }
+                    new_data = {
+                        "card_id": card_id,
+                        "manufacturer": row.get("manufacturer"),
+                        "stock_type": row.get("stock_type"),
+                        "predicted_grade": mean,
+                        "model_version": MODEL_VERSION,
+                        "submitted_by": user_email,
+                        "auto_centering_score": center,
+                        "raw_centering_score": safe_float(row.get("raw_centering_score"), 5.0),
+                        "corners_input": corners,
+                        "edges_input": edges,
+                        "surface_input": surface,
+                        "psa_is_graded": row.get("psa_is_graded"),
+                        "psa_actual_grade": row.get("psa_actual_grade"),
+                        "front_image_url": row.get("front_image_url"),
+                        "back_image_url": row.get("back_image_url"),
+                        "created_at": str(datetime.now())
+                    }
 
-        requests.post(TABLE_URL, json=new_data, headers=headers)
+                    requests.post(TABLE_URL, json=new_data, headers=headers)
 
-    st.success("Re-score completed successfully.")
+                st.success("Re-score completed successfully.")
