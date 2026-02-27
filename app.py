@@ -58,20 +58,31 @@ label {
     border: none !important;
 }
 
-/* ===== SLIDERS ===== */
+/* ===== SLIDERS (FORCE WHITE BAR) ===== */
 
-/* Slider track */
+/* Entire slider container */
+div[data-baseweb="slider"] {
+    color: white !important;
+}
+
+/* Slider background track */
 div[data-baseweb="slider"] > div {
     background-color: rgba(255,255,255,0.25) !important;
 }
 
-/* Slider bar (active fill) */
+/* Active filled bar */
+div[data-baseweb="slider"] div[aria-valuemin] {
+    background-color: white !important;
+}
+
+/* Slider knob */
 div[data-baseweb="slider"] div[role="slider"] {
     background-color: white !important;
     border: 2px solid #C9A44D !important;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.2);
 }
 
-/* Slider label text */
+/* Slider label */
 .stSlider label {
     color: white !important;
 }
