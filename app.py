@@ -461,6 +461,7 @@ if user_email == "Adaml":
 # RESCORE EXISTING SUBMISSIONS
 # ===============================
 
+st.write(df.columns)
 st.markdown("<hr>", unsafe_allow_html=True)
 st.subheader("Model Maintenance")
 
