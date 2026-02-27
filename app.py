@@ -6,13 +6,18 @@ import pandas as pd
 import uuid
 
 # ===============================
-# STYLE
+# BRAND STYLE
 # ===============================
 
 st.markdown("""
 <style>
-body, .main {
-    background-color: #0E0E0E;
+body {
+    background: linear-gradient(135deg, #4B1E78 0%, #3A1460 100%);
+    color: white;
+}
+
+.main {
+    background: linear-gradient(135deg, #4B1E78 0%, #3A1460 100%);
 }
 
 h1, h2, h3 {
@@ -20,33 +25,39 @@ h1, h2, h3 {
 }
 
 hr {
-    border: 1px solid #333;
+    border: 1px solid rgba(255,255,255,0.15);
 }
 
 .stButton>button {
     background-color: #C9A44D;
     color: black;
     font-weight: bold;
-    border-radius: 8px;
-    padding: 0.6em 1.2em;
-}
-
-.grade-box {
-    background-color: #1A1A1A;
-    padding: 25px;
-    border-radius: 14px;
-    text-align: center;
-    font-size: 42px;
-    font-weight: bold;
-    color: #C9A44D;
-    margin-bottom: 20px;
+    border-radius: 10px;
+    padding: 0.7em 1.4em;
+    border: none;
 }
 
 .section-box {
-    background-color: #161616;
-    padding: 15px;
-    border-radius: 12px;
-    margin-bottom: 15px;
+    background-color: rgba(0,0,0,0.25);
+    padding: 20px;
+    border-radius: 14px;
+    margin-bottom: 18px;
+    backdrop-filter: blur(6px);
+}
+
+.grade-box {
+    background: linear-gradient(135deg, #C9A44D 0%, #E5C97A 100%);
+    padding: 28px;
+    border-radius: 18px;
+    text-align: center;
+    font-size: 48px;
+    font-weight: bold;
+    color: black;
+    margin-bottom: 20px;
+}
+
+.stProgress > div > div > div {
+    background-color: #C9A44D;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -86,8 +97,9 @@ if user_email not in AUTHORIZED_USERS:
 # HEADER
 # ===============================
 
-st.markdown("<h1 style='text-align:center;'>VOODOO SPORTS GRADING</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align:center;'>AI-Assisted PSA Pre-Screen</h3>", unsafe_allow_html=True)
+st.set_page_config(page_title="Voodoo Sports Grading")
+
+st.image("logo.png", use_column_width=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # ===============================
@@ -141,6 +153,7 @@ if st.button("Run Pre-Screen Analysis"):
         st.error("Upload both images.")
         st.stop()
 
+    # -------- Centering API --------
     response = requests.post(
         CENTERING_API_URL,
         files={"file": front.getvalue()}
@@ -160,11 +173,13 @@ if st.button("Run Pre-Screen Analysis"):
         combined_ratio = (h_ratio + v_ratio) / 2
         raw_centering_score = round(combined_ratio * 10, 2)
 
+    # Slab stabilization
     if psa_is_graded:
         auto_centering_score = 8.8
     else:
         auto_centering_score = raw_centering_score
 
+    # -------- Grading --------
     weighted_grade = (
         auto_centering_score * 0.35
         + corners_input * 0.25
@@ -186,6 +201,7 @@ if st.button("Run Pre-Screen Analysis"):
     ):
         mean = 10.0
 
+    # -------- Probability --------
     def normal_pdf(x, mu, sigma):
         return np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -204,7 +220,7 @@ if st.button("Run Pre-Screen Analysis"):
     # DISPLAY RESULTS
     # ===============================
 
-    st.markdown("<div class='grade-box'>{}</div>".format(mean), unsafe_allow_html=True)
+    st.markdown(f"<div class='grade-box'>{mean}</div>", unsafe_allow_html=True)
 
     st.subheader("Grade Probability")
 
@@ -266,7 +282,7 @@ if st.button("Run Pre-Screen Analysis"):
     else:
         st.error(f"Database error: {save_response.text}")
 
-    with st.expander("Debug Info"):
+    with st.expander("Technical Details"):
         st.write("Raw Centering Score:", raw_centering_score)
         st.write("Centering Used:", auto_centering_score)
         st.write("Corners:", corners_input)
@@ -274,13 +290,13 @@ if st.button("Run Pre-Screen Analysis"):
         st.write("Surface:", surface_input)
 
 # ===============================
-# ADMIN PANEL
+# ADMIN DASHBOARD
 # ===============================
 
 if user_email == "Adaml":
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.header("Admin Analytics")
+    st.header("Calibration Dashboard")
 
     analytics_response = requests.get(TABLE_URL, headers=headers)
 
