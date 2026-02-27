@@ -347,6 +347,7 @@ if st.button("Run Pre-Screen Analysis"):
         "corners_input": corners_input,
         "edges_input": edges_input,
         "surface_input": surface_input,
+        "card_id": card_id,
         "created_at": str(datetime.now())
     }
 
@@ -440,6 +441,7 @@ if user_email == "Adaml":
                     mean = 10.0
 
                 new_data = {
+                    "card_id": row["card_id"],
                     "manufacturer": row["manufacturer"],
                     "stock_type": row["stock_type"],
                     "predicted_grade": mean,
