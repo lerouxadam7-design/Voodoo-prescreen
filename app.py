@@ -377,9 +377,14 @@ if user_email == "Adaml":
     analytics_response = requests.get(TABLE_URL, headers=headers)
 
     if analytics_response.status_code == 200:
+
         df = pd.DataFrame(analytics_response.json())
 
         if len(df) > 0:
+
+            # ===============================
+            # Prediction Accuracy
+            # ===============================
 
             if "psa_actual_grade" in df.columns:
                 df_with_actual = df.dropna(subset=["psa_actual_grade"])
@@ -396,69 +401,113 @@ if user_email == "Adaml":
                     st.write("Bias:",
                              round(df_with_actual["prediction_error"].mean(), 2))
 
+            # ===============================
+            # Grade Distribution
+            # ===============================
+
             st.subheader("Grade Distribution")
             st.bar_chart(df["predicted_grade"].value_counts().sort_index())
 
+            # ===============================
+            # Model Version Comparison
+            # ===============================
+
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.subheader("Model Version Comparison")
+
+            if "card_id" in df.columns and "model_version" in df.columns:
+
+                version_counts = df["model_version"].value_counts()
+                st.write("Submissions by Version:")
+                st.write(version_counts)
+
+                if df["model_version"].nunique() > 1:
+
+                    grouped = df.sort_values("created_at").groupby("card_id")
+
+                    comparison_rows = []
+
+                    for card_id, group in grouped:
+
+                        if group["model_version"].nunique() > 1:
+
+                            group = group.sort_values("created_at")
+                            first = group.iloc[0]
+                            latest = group.iloc[-1]
+
+                            comparison_rows.append({
+                                "card_id": card_id,
+                                "first_version": first["model_version"],
+                                "first_grade": first["predicted_grade"],
+                                "latest_version": latest["model_version"],
+                                "latest_grade": latest["predicted_grade"],
+                                "delta": latest["predicted_grade"] - first["predicted_grade"]
+                            })
+
+                    if comparison_rows:
+                        comp_df = pd.DataFrame(comparison_rows)
+                        st.subheader("Grade Changes Across Versions")
+                        st.dataframe(comp_df)
+
+            # ===============================
+            # Raw Data
+            # ===============================
+
+            st.markdown("<hr>", unsafe_allow_html=True)
             st.subheader("Raw Data")
             st.dataframe(df)
 
-    # ===============================
-    # RESCORE EXISTING SUBMISSIONS
-    # ===============================
+            # ===============================
+            # RESCORE EXISTING SUBMISSIONS
+            # ===============================
 
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Model Maintenance")
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.subheader("Model Maintenance")
 
-    if st.button("Re-Score All Existing Cards With Current Model"):
+            if st.button("Re-Score All Existing Cards With Current Model"):
 
-        existing_response = requests.get(TABLE_URL, headers=headers)
+                for _, row in df.iterrows():
 
-        if existing_response.status_code == 200:
+                    weighted_grade = (
+                        row["auto_centering_score"] * 0.35
+                        + row["corners_input"] * 0.25
+                        + row["edges_input"] * 0.20
+                        + row["surface_input"] * 0.20
+                    )
 
-            existing_df = pd.DataFrame(existing_response.json())
+                    mean = round(weighted_grade, 2)
 
-            for _, row in existing_df.iterrows():
+                    if mean > 9:
+                        mean = 9 + (mean - 9) * 0.6
 
-                weighted_grade = (
-                    row["auto_centering_score"] * 0.35
-                    + row["corners_input"] * 0.25
-                    + row["edges_input"] * 0.20
-                    + row["surface_input"] * 0.20
-                )
+                    if (
+                        row["auto_centering_score"] >= 8.8 and
+                        row["corners_input"] >= 9.5 and
+                        row["edges_input"] >= 9.5 and
+                        row["surface_input"] >= 9.5 and
+                        mean >= 9.3
+                    ):
+                        mean = 10.0
 
-                mean = round(weighted_grade, 2)
+                    new_data = {
+                        "card_id": row["card_id"],
+                        "manufacturer": row["manufacturer"],
+                        "stock_type": row["stock_type"],
+                        "predicted_grade": mean,
+                        "model_version": MODEL_VERSION,
+                        "submitted_by": user_email,
+                        "auto_centering_score": row["auto_centering_score"],
+                        "raw_centering_score": row["raw_centering_score"],
+                        "corners_input": row["corners_input"],
+                        "edges_input": row["edges_input"],
+                        "surface_input": row["surface_input"],
+                        "psa_is_graded": row["psa_is_graded"],
+                        "psa_actual_grade": row["psa_actual_grade"],
+                        "front_image_url": row["front_image_url"],
+                        "back_image_url": row["back_image_url"],
+                        "created_at": str(datetime.now())
+                    }
 
-                if mean > 9:
-                    mean = 9 + (mean - 9) * 0.6
+                    requests.post(TABLE_URL, json=new_data, headers=headers)
 
-                if (
-                    row["auto_centering_score"] >= 8.8 and
-                    row["corners_input"] >= 9.5 and
-                    row["edges_input"] >= 9.5 and
-                    row["surface_input"] >= 9.5 and
-                    mean >= 9.3
-                ):
-                    mean = 10.0
-
-                new_data = {
-                    "card_id": row["card_id"],
-                    "manufacturer": row["manufacturer"],
-                    "stock_type": row["stock_type"],
-                    "predicted_grade": mean,
-                    "model_version": MODEL_VERSION,
-                    "submitted_by": user_email,
-                    "auto_centering_score": row["auto_centering_score"],
-                    "raw_centering_score": row["raw_centering_score"],
-                    "corners_input": row["corners_input"],
-                    "edges_input": row["edges_input"],
-                    "surface_input": row["surface_input"],
-                    "psa_is_graded": row["psa_is_graded"],
-                    "psa_actual_grade": row["psa_actual_grade"],
-                    "front_image_url": row["front_image_url"],
-                    "back_image_url": row["back_image_url"],
-                    "created_at": str(datetime.now())
-                }
-
-                requests.post(TABLE_URL, json=new_data, headers=headers)
-
-            st.success("Re-score completed.")
+                st.success("Re-score completed.")
