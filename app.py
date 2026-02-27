@@ -343,6 +343,9 @@ if st.button("Run Pre-Screen Analysis"):
         "psa_actual_grade": psa_actual_grade,
         "front_image_url": front_url,
         "back_image_url": back_url,
+        "corners_input": corners_input,
+        "edges_input": edges_input,
+        "surface_input": surface_input,
         "created_at": str(datetime.now())
     }
 
@@ -396,3 +399,60 @@ if user_email == "Adaml":
 
             st.subheader("Raw Data")
             st.dataframe(df)
+# ===============================
+# RESCORE EXISTING SUBMISSIONS
+# ===============================
+
+if st.button("Re-Score All Existing Cards With Current Model"):
+
+    existing_response = requests.get(TABLE_URL, headers=headers)
+
+    if existing_response.status_code == 200:
+
+        existing_df = pd.DataFrame(existing_response.json())
+
+        for _, row in existing_df.iterrows():
+
+            # Recalculate prediction using stored features
+            weighted_grade = (
+                row["auto_centering_score"] * 0.35
+                + row["corners_input"] * 0.25
+                + row["edges_input"] * 0.20
+                + row["surface_input"] * 0.20
+            )
+
+            mean = round(weighted_grade, 2)
+
+            if mean > 9:
+                mean = 9 + (mean - 9) * 0.6
+
+            if (
+                row["auto_centering_score"] >= 8.8 and
+                row["corners_input"] >= 9.5 and
+                row["edges_input"] >= 9.5 and
+                row["surface_input"] >= 9.5 and
+                mean >= 9.3
+            ):
+                mean = 10.0
+
+            new_data = {
+                "manufacturer": row["manufacturer"],
+                "stock_type": row["stock_type"],
+                "predicted_grade": mean,
+                "model_version": MODEL_VERSION,
+                "submitted_by": user_email,
+                "auto_centering_score": row["auto_centering_score"],
+                "raw_centering_score": row["raw_centering_score"],
+                "corners_input": row["corners_input"],
+                "edges_input": row["edges_input"],
+                "surface_input": row["surface_input"],
+                "psa_is_graded": row["psa_is_graded"],
+                "psa_actual_grade": row["psa_actual_grade"],
+                "front_image_url": row["front_image_url"],
+                "back_image_url": row["back_image_url"],
+                "created_at": str(datetime.now())
+            }
+
+            requests.post(TABLE_URL, json=new_data, headers=headers)
+
+        st.success("Re-score completed.")
