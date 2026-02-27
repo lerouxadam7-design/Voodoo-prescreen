@@ -384,9 +384,7 @@ if user_role == "admin":
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.header("Calibration Dashboard")
-    st.subheader("Submissions by User")
-    st.bar_chart(df["submitted_by"].value_counts())
-
+    
     st.info("Model v1.9-locked — No grading logic changes during data accumulation phase.")
 
     analytics_response = requests.get(TABLE_URL, headers=headers)
@@ -471,6 +469,8 @@ if user_role == "admin":
             st.markdown("<hr>", unsafe_allow_html=True)
             st.subheader("Raw Data")
             st.dataframe(df)
+            st.subheader("Submissions by User")
+            st.bar_chart(df["submitted_by"].value_counts())
 
             # ===============================
             # RESCORE EXISTING SUBMISSIONS
