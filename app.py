@@ -113,6 +113,14 @@ if st.button("Run Pre-Screen Analysis"):
 
     if mean > 9:
         mean = 9 + (mean - 9) * 0.6
+    if (
+        auto_centering_score >= 8.8 and
+        corners_input >= 9.5 and
+        edges_input >= 9.5 and
+        surface_input >= 9.5 and
+        mean >= 9.6
+):
+        mean = 10.0
 
     # -------- Probability --------
     def normal_pdf(x, mu, sigma):
