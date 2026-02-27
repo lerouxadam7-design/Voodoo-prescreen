@@ -12,21 +12,27 @@ import uuid
 st.markdown("""
 <style>
 
-/* ===== FULL PAGE PURPLE GRADIENT ===== */
+/* ===== FORCE FULL PURPLE BACKGROUND ===== */
 
-html, body, [class*="css"] {
+.stApp {
     background: linear-gradient(135deg, #5A2E91 0%, #3E1C6E 100%) !important;
-    color: white !important;
 }
 
-/* Main container */
-.main {
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #5A2E91 0%, #3E1C6E 100%) !important;
+}
+
+[data-testid="stHeader"] {
     background: transparent !important;
 }
 
-/* Remove default white blocks */
-section[data-testid="stSidebar"] {
-    background: linear-gradient(135deg, #5A2E91 0%, #3E1C6E 100%) !important;
+[data-testid="stToolbar"] {
+    background: transparent !important;
+}
+
+/* Remove white blocks */
+section.main > div {
+    background: transparent !important;
 }
 
 /* Headers */
@@ -34,13 +40,7 @@ h1, h2, h3 {
     color: #C9A44D !important;
 }
 
-/* Divider */
-hr {
-    border: 1px solid rgba(255,255,255,0.2);
-}
-
-/* ===== BUTTON ===== */
-
+/* Buttons */
 .stButton>button {
     background-color: #C9A44D !important;
     color: black !important;
@@ -50,34 +50,29 @@ hr {
     border: none;
 }
 
-/* ===== SLIDERS ===== */
-
-/* Slider track */
+/* Sliders */
 div[data-baseweb="slider"] > div {
     background-color: rgba(255,255,255,0.2) !important;
 }
 
-/* Active slider bar */
 div[data-baseweb="slider"] div[role="slider"] {
     background-color: #C9A44D !important;
     border: 2px solid white !important;
 }
 
-/* Slider numbers */
-.stSlider label {
-    color: white !important;
-}
-
-/* ===== INPUT FIELDS ===== */
-
+/* Input fields */
 input, textarea {
     background-color: rgba(0,0,0,0.3) !important;
     color: white !important;
     border-radius: 8px !important;
 }
 
-/* ===== GRADE BOX ===== */
+/* Progress bars */
+.stProgress > div > div > div {
+    background-color: #C9A44D !important;
+}
 
+/* Grade box */
 .grade-box {
     background: linear-gradient(135deg, #C9A44D 0%, #E5C97A 100%);
     padding: 28px;
@@ -87,11 +82,6 @@ input, textarea {
     font-weight: bold;
     color: black;
     margin-bottom: 20px;
-}
-
-/* Progress bars */
-.stProgress > div > div > div {
-    background-color: #C9A44D !important;
 }
 
 </style>
