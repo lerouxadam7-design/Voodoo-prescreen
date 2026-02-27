@@ -50,11 +50,6 @@ back = st.file_uploader("Upload Back Image", type=["jpg", "png"])
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
-psa10 = st.number_input("PSA 10 Value", value=100.0)
-psa9 = st.number_input("PSA 9 Value", value=50.0)
-psa8 = st.number_input("PSA 8 Value", value=20.0)
-fee = st.number_input("Grading Fee", value=25.0)
-
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
 psa_actual_grade = (
     st.number_input("Enter PSA Actual Grade", min_value=1.0, max_value=10.0, step=0.5)
@@ -136,12 +131,6 @@ if st.button("Run Pre-Screen Analysis"):
     prob10 /= total
     prob9 /= total
     prob8 /= total
-
-    ev = (
-        prob10 * psa10
-        + prob9 * psa9
-        + prob8 * psa8
-    ) - fee
 
     # -------- Upload Images to Supabase Storage --------
     unique_id = str(uuid.uuid4())
