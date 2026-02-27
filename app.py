@@ -6,73 +6,99 @@ import pandas as pd
 import uuid
 
 # ===============================
-# BRAND STYLE
+# BRAND STYLE (VOODOO THEME)
 # ===============================
 
 st.markdown("""
 <style>
 
-/* ===== FORCE FULL PURPLE BACKGROUND ===== */
+/* ===== FULL APP BACKGROUND ===== */
 
 .stApp {
-    background: linear-gradient(135deg, #5A2E91 0%, #3E1C6E 100%) !important;
+    background: linear-gradient(
+        90deg,
+        #2E0F4D 0%,
+        #3F1668 50%,
+        #4E1F80 100%
+    ) !important;
 }
 
+/* Remove Streamlit white layers */
 [data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #5A2E91 0%, #3E1C6E 100%) !important;
-}
-
-[data-testid="stHeader"] {
     background: transparent !important;
 }
 
-[data-testid="stToolbar"] {
-    background: transparent !important;
-}
-
-/* Remove white blocks */
 section.main > div {
     background: transparent !important;
 }
 
-/* Headers */
-h1, h2, h3 {
-    color: #C9A44D !important;
+/* Remove top toolbar color */
+[data-testid="stHeader"] {
+    background: transparent !important;
 }
 
-/* Buttons */
+/* ===== TYPOGRAPHY ===== */
+
+h1, h2, h3 {
+    color: #C9A44D !important;
+    font-weight: 700;
+}
+
+label {
+    color: white !important;
+}
+
+/* ===== BUTTONS ===== */
+
 .stButton>button {
     background-color: #C9A44D !important;
     color: black !important;
-    font-weight: bold;
-    border-radius: 10px;
-    padding: 0.7em 1.4em;
-    border: none;
+    font-weight: bold !important;
+    border-radius: 12px !important;
+    padding: 0.7em 1.5em !important;
+    border: none !important;
 }
 
-/* Sliders */
+/* ===== SLIDERS ===== */
+
+/* Slider track */
 div[data-baseweb="slider"] > div {
-    background-color: rgba(255,255,255,0.2) !important;
+    background-color: rgba(255,255,255,0.25) !important;
 }
 
+/* Slider active bar */
 div[data-baseweb="slider"] div[role="slider"] {
     background-color: #C9A44D !important;
     border: 2px solid white !important;
 }
 
-/* Input fields */
-input, textarea {
-    background-color: rgba(0,0,0,0.3) !important;
+/* Slider text */
+.stSlider label {
     color: white !important;
-    border-radius: 8px !important;
 }
 
-/* Progress bars */
+/* ===== INPUT FIELDS ===== */
+
+input, textarea {
+    background-color: rgba(0,0,0,0.25) !important;
+    color: white !important;
+    border-radius: 10px !important;
+}
+
+/* Select box */
+div[data-baseweb="select"] > div {
+    background-color: rgba(0,0,0,0.25) !important;
+    color: white !important;
+}
+
+/* ===== PROGRESS BARS ===== */
+
 .stProgress > div > div > div {
     background-color: #C9A44D !important;
 }
 
-/* Grade box */
+/* ===== GRADE DISPLAY ===== */
+
 .grade-box {
     background: linear-gradient(135deg, #C9A44D 0%, #E5C97A 100%);
     padding: 28px;
@@ -82,6 +108,16 @@ input, textarea {
     font-weight: bold;
     color: black;
     margin-bottom: 20px;
+}
+
+/* ===== SECTION PANELS ===== */
+
+.section-box {
+    background-color: rgba(0,0,0,0.25);
+    padding: 20px;
+    border-radius: 16px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(4px);
 }
 
 </style>
