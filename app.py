@@ -118,7 +118,7 @@ if st.button("Run Pre-Screen Analysis"):
         corners_input >= 9.5 and
         edges_input >= 9.5 and
         surface_input >= 9.5 and
-        mean >= 9.6
+        mean >= 9.5
 ):
         mean = 10.0
 
@@ -203,6 +203,11 @@ if st.button("Run Pre-Screen Analysis"):
     st.write("PSA 10 Probability:", round(prob10 * 100, 1), "%")
     st.write("PSA 9 Probability:", round(prob9 * 100, 1), "%")
     st.write("PSA ≤8 Probability:", round(prob8 * 100, 1), "%")
+    st.write("Pre-gate mean:", mean)
+    st.write("Centering:", auto_centering_score)
+    st.write("Corners:", corners_input)
+    st.write("Edges:", edges_input)
+    st.write("Surface:", surface_input)
 
 # ===============================
 # ADMIN PANEL
