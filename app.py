@@ -152,16 +152,27 @@ headers = {
     "Content-Type": "application/json"
 }
 
-AUTHORIZED_USERS = ["Adaml"]
-
-# ===============================
-# ACCESS CONTROL
-# ===============================
-
 user_email = st.text_input("Enter Access Email")
 
-if user_email not in AUTHORIZED_USERS:
-    st.warning("Invite-only beta. Access restricted.")
+if user_email:
+
+    user_check = requests.get(
+        f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
+        headers=headers
+    )
+
+    if user_check.status_code != 200:
+        st.error("User lookup failed.")
+        st.stop()
+
+    user_data = user_check.json()
+
+    if len(user_data) == 0:
+        st.warning("Invite-only beta. Access restricted.")
+        st.stop()
+
+    user_role = user_data[0]["role"]
+else:
     st.stop()
 
 # ===============================
