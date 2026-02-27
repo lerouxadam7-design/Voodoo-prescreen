@@ -9,7 +9,7 @@ import uuid
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.7-beta"
+MODEL_VERSION = "v1.9-beta"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
