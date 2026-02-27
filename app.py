@@ -307,7 +307,8 @@ if st.button("Run Pre-Screen Analysis"):
     # ===============================
     # SAVE TO SUPABASE
     # ===============================
-
+    
+    card_id = str(uuid.uuid4())
     unique_id = str(uuid.uuid4())
 
     front_filename = f"{unique_id}_front.jpg"
