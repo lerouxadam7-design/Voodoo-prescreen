@@ -320,10 +320,9 @@ if st.button("Run Pre-Screen Analysis"):
     # ===============================
 
     card_id = str(uuid.uuid4())
-    unique_id = str(uuid.uuid4())
 
-    front_filename = f"{unique_id}_front.jpg"
-    back_filename = f"{unique_id}_back.jpg"
+    front_filename = f"{card_id}/front.jpg"
+    back_filename = f"{card_id}/back.jpg"
 
     # Determine content type
     front_type = front.type if hasattr(front, "type") else "image/jpeg"
