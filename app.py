@@ -137,7 +137,7 @@ div[data-baseweb="select"] > div {
 # CONFIG
 # ===============================
 
-MODEL_VERSION = "v1.9"
+MODEL_VERSION = "v1.9-locked"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
