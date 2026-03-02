@@ -325,16 +325,29 @@ if st.button("Run Pre-Screen Analysis"):
     front_filename = f"{unique_id}_front.jpg"
     back_filename = f"{unique_id}_back.jpg"
 
-    requests.post(
-        f"{STORAGE_URL}/card-images/{front_filename}",
-        headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-        data=front.getvalue()
-    )
+    upload_headers = {
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "apikey": SUPABASE_KEY,
+    "Content-Type": "image/jpeg"
+}
 
-    requests.post(
-        f"{STORAGE_URL}/card-images/{back_filename}",
-        headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-        data=back.getvalue()
+upload_response_front = requests.post(
+    f"{SUPABASE_URL}/storage/v1/object/card-images/{front_filename}",
+    headers=upload_headers,
+    data=front.getvalue()
+)
+
+upload_response_back = requests.post(
+    f"{SUPABASE_URL}/storage/v1/object/card-images/{back_filename}",
+    headers=upload_headers,
+    data=back.getvalue()
+)
+
+if upload_response_front.status_code not in [200, 201]:
+    st.error(f"Front upload failed: {upload_response_front.text}")
+
+if upload_response_back.status_code not in [200, 201]:
+    st.error(f"Back upload failed: {upload_response_back.text}")
     )
 
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
