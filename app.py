@@ -362,6 +362,10 @@ if st.button("Run Pre-Screen Analysis"):
     if upload_response_back.status_code not in [200, 201]:
         st.error(f"Back upload failed: {upload_response_back.text}")
 
+    if upload_response_front.status_code not in [200, 201]:
+        st.error("Upload failed — submission not saved.")
+        st.stop()
+
     # Public URLs
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
