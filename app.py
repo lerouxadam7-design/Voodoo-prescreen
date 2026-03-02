@@ -366,6 +366,12 @@ if st.button("Run Pre-Screen Analysis"):
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
+    st.write("Front upload status:", upload_response_front.status_code)
+    st.write("Front upload response:", upload_response_front.text)
+
+    st.write("Back upload status:", upload_response_back.status_code)
+    st.write("Back upload response:", upload_response_back.text)
+
     data = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
