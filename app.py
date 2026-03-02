@@ -318,38 +318,51 @@ if st.button("Run Pre-Screen Analysis"):
     # ===============================
     # SAVE TO SUPABASE
     # ===============================
-    
+
     card_id = str(uuid.uuid4())
     unique_id = str(uuid.uuid4())
 
     front_filename = f"{unique_id}_front.jpg"
     back_filename = f"{unique_id}_back.jpg"
 
-    upload_headers = {
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "apikey": SUPABASE_KEY,
-    "Content-Type": "image/jpeg"
-}
+    # Determine content type
+    front_type = front.type if hasattr(front, "type") else "image/jpeg"
+    back_type = back.type if hasattr(back, "type") else "image/jpeg"
 
-upload_response_front = requests.post(
-    f"{SUPABASE_URL}/storage/v1/object/card-images/{front_filename}",
-    headers=upload_headers,
-    data=front.getvalue()
-)
+    upload_headers_front = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_KEY,
+        "Content-Type": front_type
+    }
 
-upload_response_back = requests.post(
-    f"{SUPABASE_URL}/storage/v1/object/card-images/{back_filename}",
-    headers=upload_headers,
-    data=back.getvalue()
-)
+    upload_headers_back = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_KEY,
+        "Content-Type": back_type
+    }
 
-if upload_response_front.status_code not in [200, 201]:
-    st.error(f"Front upload failed: {upload_response_front.text}")
-
-if upload_response_back.status_code not in [200, 201]:
-    st.error(f"Back upload failed: {upload_response_back.text}")
+    # Upload front image
+    upload_response_front = requests.post(
+        f"{SUPABASE_URL}/storage/v1/object/card-images/{front_filename}",
+        headers=upload_headers_front,
+        data=front.getvalue()
     )
 
+    # Upload back image
+    upload_response_back = requests.post(
+        f"{SUPABASE_URL}/storage/v1/object/card-images/{back_filename}",
+        headers=upload_headers_back,
+        data=back.getvalue()
+    )
+
+    # Error handling
+    if upload_response_front.status_code not in [200, 201]:
+        st.error(f"Front upload failed: {upload_response_front.text}")
+
+    if upload_response_back.status_code not in [200, 201]:
+        st.error(f"Back upload failed: {upload_response_back.text}")
+
+    # Public URLs
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}"
 
