@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import numpy as np
+import pandas as pd
 from datetime import datetime
 import uuid
 
@@ -8,12 +9,12 @@ import uuid
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v2-experimental"
+MODEL_VERSION = "v3-calibrated"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
-API_BASE = "https://voodoo-centering-api.onrender.com"  # <-- Replace with yours
+API_BASE = "https://voodoo-centering-api.onrender.com"  # Replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object"
@@ -29,18 +30,15 @@ headers = {
 # ============================================================
 
 st.set_page_config(page_title="Voodoo Sports Grading")
-st.title("Voodoo Sports Grading — RAW Pre-Screen")
+st.title("Voodoo Sports Grading")
 
-st.markdown("""
-Upload:
-• Full card front (required)  
-• Full card back (recommended)  
-• Corner close-ups (optional but improves accuracy)
-""")
+st.warning("During calibration phase, slabbed PSA cards help improve grading accuracy.")
 
 # ============================================================
 # FILE UPLOADS
 # ============================================================
+
+st.markdown("## Upload Card")
 
 full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "png"])
 full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
@@ -55,11 +53,28 @@ corner4 = st.file_uploader("Corner 4", type=["jpg","jpeg","png"], key="corner4")
 corner_files = [c for c in [corner1, corner2, corner3, corner4] if c is not None]
 
 if len(corner_files) == 0:
-    st.info("Corner close-ups improve grading accuracy but are optional during calibration.")
+    st.info("Corner close-ups improve grading accuracy but are optional.")
 
 # ============================================================
-# EXPERIMENTAL GRADE FUNCTION
+# GRADE FUNCTIONS
 # ============================================================
+
+def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+    centering_score = 10 - ((1 - centering_raw) * 5)
+
+    edge_score_scaled = edge_score * 20
+    corner_score_scaled = corner_score * 20
+
+    final = (
+        centering_score * 0.4 +
+        corner_score_scaled * 0.4 +
+        edge_score_scaled * 0.2
+    )
+
+    return round(max(1, min(10, final)), 2)
+
 
 def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
 
@@ -86,7 +101,7 @@ if st.button("Run Analysis"):
         st.stop()
 
     # --------------------------------------------------------
-    # FULL CARD ANALYSIS (FRONT ONLY)
+    # FULL CARD ANALYSIS
     # --------------------------------------------------------
 
     response = requests.post(
@@ -105,33 +120,37 @@ if st.button("Run Analysis"):
     edge_score = full_result["edge_score"]
 
     # --------------------------------------------------------
-    # CORNER ANALYSIS (OPTIONAL)
+    # CORNER ANALYSIS
     # --------------------------------------------------------
 
     corner_score = 0.5
 
     if len(corner_files) > 0:
-
-        corner_scores = []
+        scores = []
 
         for c in corner_files:
-            response_corner = requests.post(
+            r = requests.post(
                 f"{API_BASE}/analyze_corner",
                 files={"file": c.getvalue()}
             )
+            if r.status_code == 200:
+                scores.append(r.json()["corner_score"])
 
-            if response_corner.status_code == 200:
-                data_corner = response_corner.json()
-                corner_scores.append(data_corner["corner_score"])
-
-        if len(corner_scores) > 0:
-            corner_score = float(np.mean(corner_scores))
+        if len(scores) > 0:
+            corner_score = float(np.mean(scores))
 
     # --------------------------------------------------------
-    # COMPUTE EXPERIMENTAL GRADE
+    # GRADES
     # --------------------------------------------------------
 
-    experimental_grade, centering_component, edge_component, corner_component = compute_experimental_grade(
+    experimental_grade = compute_experimental_grade(
+        horizontal_ratio,
+        vertical_ratio,
+        edge_score,
+        corner_score
+    )
+
+    calibrated_grade = compute_calibrated_grade(
         horizontal_ratio,
         vertical_ratio,
         edge_score,
@@ -142,60 +161,25 @@ if st.button("Run Analysis"):
     # DISPLAY RESULTS
     # ========================================================
 
+    st.markdown("## Calibrated Grade (v3)")
+    st.markdown(f"### {calibrated_grade}")
+
     st.markdown("## Experimental Grade (v2)")
     st.markdown(f"### {experimental_grade}")
-
-    st.markdown("---")
-    st.markdown("### Component Scores")
-
-    st.write("Centering:", round(centering_component, 2))
-    st.write("Edges:", round(edge_component, 2))
-    st.write("Corners:", round(corner_component, 2))
 
     st.markdown("---")
     st.markdown("### Raw Feature Values")
 
     st.write("Horizontal Ratio:", round(horizontal_ratio, 4))
     st.write("Vertical Ratio:", round(vertical_ratio, 4))
-    st.write("Edge Score (raw):", round(edge_score, 4))
-    st.write("Corner Score (raw):", round(corner_score, 4))
+    st.write("Edge Score:", round(edge_score, 4))
+    st.write("Corner Score:", round(corner_score, 4))
 
     # ========================================================
-    # SAVE IMAGES TO SUPABASE STORAGE
+    # SAVE TO SUPABASE
     # ========================================================
 
     card_id = str(uuid.uuid4())
-
-    upload_headers = {
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "apikey": SUPABASE_KEY,
-        "Content-Type": "image/jpeg"
-    }
-
-    front_filename = f"{card_id}_front.jpg"
-    back_filename = f"{card_id}_back.jpg"
-
-    # Upload front
-    requests.post(
-        f"{SUPABASE_URL}/storage/v1/object/card-images/{front_filename}",
-        headers=upload_headers,
-        data=full_card_front.getvalue()
-    )
-
-    # Upload back if provided
-    if full_card_back is not None:
-        requests.post(
-            f"{SUPABASE_URL}/storage/v1/object/card-images/{back_filename}",
-            headers=upload_headers,
-            data=full_card_back.getvalue()
-        )
-
-    front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_filename}"
-    back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_filename}" if full_card_back else None
-
-    # ========================================================
-    # SAVE METADATA TO SUPABASE TABLE
-    # ========================================================
 
     data = {
         "card_id": card_id,
@@ -204,18 +188,52 @@ if st.button("Run Analysis"):
         "vertical_ratio": vertical_ratio,
         "edge_score": edge_score,
         "corner_score": corner_score,
-        "centering_component": centering_component,
-        "edge_component": edge_component,
-        "corner_component": corner_component,
         "experimental_grade": experimental_grade,
-        "front_image_url": front_url,
-        "back_image_url": back_url,
+        "calibrated_grade": calibrated_grade,
         "created_at": str(datetime.now())
     }
 
-    save_response = requests.post(TABLE_URL, json=data, headers=headers)
+    save = requests.post(TABLE_URL, json=data, headers=headers)
 
-    if save_response.status_code == 201:
-        st.success("Submission saved to database.")
+    if save.status_code == 201:
+        st.success("Submission saved.")
     else:
-        st.error(f"Database error: {save_response.text}")
+        st.error("Database error.")
+
+# ============================================================
+# ADMIN DASHBOARD
+# ============================================================
+
+st.markdown("---")
+st.markdown("## Admin Dashboard")
+
+analytics_response = requests.get(TABLE_URL, headers=headers)
+
+if analytics_response.status_code == 200:
+
+    df = pd.DataFrame(analytics_response.json())
+
+    if len(df) > 0:
+
+        st.write("Total Submissions:", len(df))
+
+        if "psa_actual_grade" in df.columns:
+
+            df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"])
+
+            if len(df_valid) > 0:
+
+                df_valid["error"] = df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
+
+                mae = abs(df_valid["error"]).mean()
+                bias = df_valid["error"].mean()
+
+                st.subheader("Calibration Metrics")
+                st.write("MAE:", round(mae, 3))
+                st.write("Bias:", round(bias, 3))
+
+                st.subheader("Error Distribution")
+                st.bar_chart(df_valid["error"])
+
+        st.subheader("Grade Distribution")
+        st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
