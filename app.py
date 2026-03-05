@@ -13,7 +13,7 @@ MODEL_VERSION = "v2-experimental"
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
-API_BASE = "https://YOUR-RENDER-API.onrender.com"  # <-- Replace with yours
+API_BASE = "https://voodoo-centering-api.onrender.com"  # <-- Replace with yours
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object"
