@@ -61,26 +61,19 @@ if len(corner_files) == 0:
 # EXPERIMENTAL GRADE FUNCTION
 # ============================================================
 
-def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
 
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
-    centering_component = 10 - ((1 - centering_raw) * 5)
+    centering_fixed = 1 - centering_raw
 
-    edge_component = edge_score * 20
-    corner_component = corner_score * 20
-
-    # Prevent zero collapse but do NOT clamp to 1
-    edge_component = max(0, edge_component)
-    corner_component = max(0, corner_component)
-
-    # Weighted blend ONLY (no caps yet)
-    final = (
-        centering_component * 0.4 +
-        corner_component * 0.4 +
-        edge_component * 0.2
+    grade = (
+        6.49
+        + 4.37 * centering_fixed
+        - 0.17 * edge_score
+        + 4.92 * corner_score
     )
 
-    return round(min(final, 10), 2), centering_component, edge_component, corner_component
+    return round(max(1, min(10, grade)), 2)
 
 # ============================================================
 # RUN ANALYSIS
