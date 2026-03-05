@@ -64,33 +64,23 @@ if len(corner_files) == 0:
 def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
 
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
-    centering_score = 10 - ((1 - centering_raw) * 5)
-    centering_score = max(1, min(10, centering_score))
+    centering_component = 10 - ((1 - centering_raw) * 5)
 
-    edge_score_scaled = max(1, min(10, edge_score * 10))
-    corner_score_scaled = max(1, min(10, corner_score * 10))
+    edge_component = edge_score * 20
+    corner_component = corner_score * 20
 
-    lowest = min(centering_score, edge_score_scaled, corner_score_scaled)
+    # Prevent zero collapse but do NOT clamp to 1
+    edge_component = max(0, edge_component)
+    corner_component = max(0, corner_component)
 
-    if lowest <= 5:
-        final = lowest + 0.5
-    elif lowest <= 6:
-        final = lowest + 1
-    else:
-        final = (
-            centering_score * 0.3 +
-            corner_score_scaled * 0.4 +
-            edge_score_scaled * 0.3
-        )
+    # Weighted blend ONLY (no caps yet)
+    final = (
+        centering_component * 0.4 +
+        corner_component * 0.4 +
+        edge_component * 0.2
+    )
 
-    if (
-        centering_score >= 9 and
-        corner_score_scaled >= 9 and
-        edge_score_scaled >= 9
-    ):
-        final = 10
-
-    return round(min(final, 10), 2), centering_score, edge_score_scaled, corner_score_scaled
+    return round(min(final, 10), 2), centering_component, edge_component, corner_component
 
 # ============================================================
 # RUN ANALYSIS
