@@ -46,8 +46,7 @@ MODEL_VERSION = "v3-calibrated"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-
-API_BASE = "https://voodoo-centering-api.onrender.com"  # replace
+API_BASE = "https://voodoo-centering-api.onrender.com"  # Replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
@@ -66,7 +65,6 @@ st.markdown("### Access")
 user_email = st.text_input("Enter Access Email")
 
 if user_email:
-
     user_check = requests.get(
         f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
         headers=headers
@@ -87,7 +85,7 @@ else:
     st.stop()
 
 # ============================================================
-# CARD INFO SECTION
+# CARD INFO
 # ============================================================
 
 st.markdown("## Card Information")
@@ -110,7 +108,7 @@ if psa_is_graded:
     )
 
 # ============================================================
-# FILE UPLOADS
+# IMAGE UPLOADS
 # ============================================================
 
 st.markdown("## Upload Card Images")
@@ -131,18 +129,27 @@ corner_files = [c for c in [corner1, corner2, corner3, corner4] if c is not None
 # GRADE FUNCTIONS
 # ============================================================
 
-def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+    centering_score = 10 - ((1 - centering_raw) * 5)
+    edge_scaled = edge_score * 20
+    corner_scaled = corner_score * 20
+    final = (
+        centering_score * 0.4 +
+        corner_scaled * 0.4 +
+        edge_scaled * 0.2
+    )
+    return round(max(1, min(10, final)), 2)
 
+def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
     centering_fixed = 1 - centering_raw
-
     grade = (
         6.49
         + 4.37 * centering_fixed
         - 0.17 * edge_score
         + 4.92 * corner_score
     )
-
     return round(max(1, min(10, grade)), 2)
 
 # ============================================================
@@ -164,11 +171,11 @@ if st.button("Run Analysis"):
         st.error("Card analysis failed.")
         st.stop()
 
-    full_result = response.json()
+    result = response.json()
 
-    horizontal_ratio = full_result["horizontal_ratio"]
-    vertical_ratio = full_result["vertical_ratio"]
-    edge_score = full_result["edge_score"]
+    horizontal_ratio = result["horizontal_ratio"]
+    vertical_ratio = result["vertical_ratio"]
+    edge_score = result["edge_score"]
 
     corner_score = 0.5
 
@@ -184,6 +191,13 @@ if st.button("Run Analysis"):
         if len(scores) > 0:
             corner_score = float(np.mean(scores))
 
+    experimental_grade = compute_experimental_grade(
+        horizontal_ratio,
+        vertical_ratio,
+        edge_score,
+        corner_score
+    )
+
     calibrated_grade = compute_calibrated_grade(
         horizontal_ratio,
         vertical_ratio,
@@ -191,10 +205,12 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    st.markdown("## Calibrated Grade")
+    st.markdown("## Calibrated Grade (Primary)")
     st.markdown(f"### {calibrated_grade}")
 
-    # SAVE TO SUPABASE
+    st.markdown("## Experimental Grade (Secondary)")
+    st.markdown(f"### {experimental_grade}")
+
     card_id = str(uuid.uuid4())
 
     data = {
@@ -208,12 +224,15 @@ if st.button("Run Analysis"):
         "vertical_ratio": vertical_ratio,
         "edge_score": edge_score,
         "corner_score": corner_score,
+        "experimental_grade": experimental_grade,
         "calibrated_grade": calibrated_grade,
         "submitted_by": user_email,
         "created_at": str(datetime.now())
     }
 
     requests.post(TABLE_URL, json=data, headers=headers)
+
+    st.success("Submission saved.")
 
 # ============================================================
 # ADMIN DASHBOARD
@@ -249,3 +268,53 @@ if user_role == "admin":
 
                 st.subheader("Error Distribution")
                 st.bar_chart(df_valid["error"])
+
+        # Version comparison
+        if "model_version" in df.columns:
+            st.subheader("Submissions by Model Version")
+            st.bar_chart(df["model_version"].value_counts())
+
+        if "calibrated_grade" in df.columns:
+            st.subheader("Calibrated Grade Distribution")
+            st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
+
+    # ========================================================
+    # RE-SCORE BUTTON
+    # ========================================================
+
+    st.markdown("---")
+    st.subheader("Model Maintenance")
+
+    if st.button("Re-Score All Cards With Current Model"):
+
+        for _, row in df.iterrows():
+
+            if pd.isna(row.get("horizontal_ratio")):
+                continue
+
+            calibrated_grade = compute_calibrated_grade(
+                row["horizontal_ratio"],
+                row["vertical_ratio"],
+                row["edge_score"],
+                row["corner_score"]
+            )
+
+            new_data = {
+                "card_id": row["card_id"],
+                "model_version": MODEL_VERSION,
+                "manufacturer": row.get("manufacturer"),
+                "stock_type": row.get("stock_type"),
+                "psa_is_graded": row.get("psa_is_graded"),
+                "psa_actual_grade": row.get("psa_actual_grade"),
+                "horizontal_ratio": row["horizontal_ratio"],
+                "vertical_ratio": row["vertical_ratio"],
+                "edge_score": row["edge_score"],
+                "corner_score": row["corner_score"],
+                "calibrated_grade": calibrated_grade,
+                "submitted_by": user_email,
+                "created_at": str(datetime.now())
+            }
+
+            requests.post(TABLE_URL, json=new_data, headers=headers)
+
+        st.success("Re-scored under current model version.")
