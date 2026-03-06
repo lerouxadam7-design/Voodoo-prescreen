@@ -4,8 +4,6 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import uuid
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.metrics import mean_absolute_error
 
 # ============================================================
 # DESIGN THEME
@@ -48,7 +46,7 @@ MODEL_VERSION = "v3-linear"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-API_BASE = "https://voodoo-centering-api.onrender.com"  # replace
+API_BASE = "https://YOUR-RENDER-API.onrender.com"  # Replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
@@ -67,7 +65,6 @@ st.markdown("### Access")
 user_email = st.text_input("Enter Access Email")
 
 if user_email:
-
     user_check = requests.get(
         f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
         headers=headers
@@ -126,14 +123,12 @@ full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"
 def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
     centering_fixed = 1 - centering_raw
-
     grade = (
         6.49
         + 4.37 * centering_fixed
         - 0.17 * edge_score
         + 4.92 * corner_score
     )
-
     return round(max(1, min(10, grade)), 2)
 
 def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
@@ -230,7 +225,6 @@ if user_role == "admin":
     if analytics.status_code == 200:
 
         df = pd.DataFrame(analytics.json())
-
         st.write("Total Submissions:", len(df))
 
         if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
@@ -251,54 +245,57 @@ if user_role == "admin":
                 st.write("Bias:", round(bias, 3))
 
         # ----------------------------------------------------
-        # GRADIENT BOOSTING TEST
+        # SAFE GBM TEST
         # ----------------------------------------------------
 
         st.markdown("---")
         st.subheader("Gradient Boosting (Test Only)")
 
-        df_ml = df.dropna(subset=[
-            "psa_actual_grade",
-            "horizontal_ratio",
-            "vertical_ratio",
-            "edge_score",
-            "corner_score"
-        ]).copy()
+        try:
+            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.metrics import mean_absolute_error
 
-        if len(df_ml) > 5:
-
-            df_ml["centering_raw"] = (
-                df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
-            ) / 2
-            df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
-
-            X = df_ml[[
-                "centering_fixed",
+            df_ml = df.dropna(subset=[
+                "psa_actual_grade",
+                "horizontal_ratio",
+                "vertical_ratio",
                 "edge_score",
                 "corner_score"
-            ]]
-            y = df_ml["psa_actual_grade"]
+            ]).copy()
 
-            gbm = GradientBoostingRegressor(
-                n_estimators=300,
-                learning_rate=0.05,
-                max_depth=3,
-                random_state=42
-            )
+            if len(df_ml) > 5:
 
-            gbm.fit(X, y)
+                df_ml["centering_raw"] = (
+                    df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
+                ) / 2
+                df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
 
-            preds = gbm.predict(X)
+                X = df_ml[[
+                    "centering_fixed",
+                    "edge_score",
+                    "corner_score"
+                ]]
+                y = df_ml["psa_actual_grade"]
 
-            mae_gbm = mean_absolute_error(y, preds)
-            bias_gbm = (preds - y).mean()
+                gbm = GradientBoostingRegressor(
+                    n_estimators=300,
+                    learning_rate=0.05,
+                    max_depth=3,
+                    random_state=42
+                )
 
-            st.write("GBM MAE:", round(mae_gbm, 3))
-            st.write("GBM Bias:", round(bias_gbm, 3))
+                gbm.fit(X, y)
 
-            st.subheader("Feature Importance (GBM)")
-            for name, importance in zip(X.columns, gbm.feature_importances_):
-                st.write(f"{name}: {round(importance,3)}")
+                preds = gbm.predict(X)
+
+                mae_gbm = mean_absolute_error(y, preds)
+                bias_gbm = (preds - y).mean()
+
+                st.write("GBM MAE:", round(mae_gbm, 3))
+                st.write("GBM Bias:", round(bias_gbm, 3))
+
+        except:
+            st.info("scikit-learn not installed in environment.")
 
         # ----------------------------------------------------
         # RE-SCORE BUTTON
