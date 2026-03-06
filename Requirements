@@ -3,3 +3,4 @@ numpy
 requests
 pandas
 opencv-python-headless
+scikit-learn
