@@ -6,6 +6,39 @@ from datetime import datetime
 import uuid
 
 # ============================================================
+# DESIGN THEME (VOODOO STYLE)
+# ============================================================
+
+st.set_page_config(page_title="Voodoo Sports Grading")
+
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(
+        90deg,
+        #3F1D6A 0%,
+        #522C87 50%,
+        #5F3A96 100%
+    ) !important;
+}
+h1, h2, h3 {
+    color: #C9A44D !important;
+}
+.stButton>button {
+    background-color: #C9A44D !important;
+    color: black !important;
+    border-radius: 10px !important;
+    font-weight: bold !important;
+}
+label {
+    color: white !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("VOODOO SPORTS GRADING")
+
+# ============================================================
 # CONFIG
 # ============================================================
 
@@ -14,10 +47,10 @@ MODEL_VERSION = "v3-calibrated"
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
-API_BASE = "https://voodoo-centering-api.onrender.com"  # Replace
+API_BASE = "https://YOUR-RENDER-API.onrender.com"  # replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
-STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object"
+STORAGE_BUCKET = "card-images"
 
 headers = {
     "apikey": SUPABASE_KEY,
@@ -26,13 +59,33 @@ headers = {
 }
 
 # ============================================================
-# PAGE SETUP
+# AUTHORIZED USERS
 # ============================================================
 
-st.set_page_config(page_title="Voodoo Sports Grading")
-st.title("Voodoo Sports Grading")
+st.markdown("### Access")
 
-st.warning("During calibration phase, slabbed PSA cards help improve grading accuracy.")
+user_email = st.text_input("Enter Access Email")
+
+if user_email:
+
+    user_check = requests.get(
+        f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
+        headers=headers
+    )
+
+    if user_check.status_code != 200:
+        st.error("User lookup failed.")
+        st.stop()
+
+    user_data = user_check.json()
+
+    if len(user_data) == 0:
+        st.warning("Invite-only beta. Access restricted.")
+        st.stop()
+
+    user_role = user_data[0]["role"]
+else:
+    st.stop()
 
 # ============================================================
 # FILE UPLOADS
@@ -43,7 +96,7 @@ st.markdown("## Upload Card")
 full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "png"])
 full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
 
-st.markdown("### Optional Corner Close-Ups (Front Only)")
+st.markdown("### Optional Corner Close-Ups")
 
 corner1 = st.file_uploader("Corner 1", type=["jpg","jpeg","png"], key="corner1")
 corner2 = st.file_uploader("Corner 2", type=["jpg","jpeg","png"], key="corner2")
@@ -97,20 +150,17 @@ def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corne
 if st.button("Run Analysis"):
 
     if full_card_front is None:
-        st.error("Front card image is required.")
+        st.error("Front card image required.")
         st.stop()
 
-    # --------------------------------------------------------
     # FULL CARD ANALYSIS
-    # --------------------------------------------------------
-
     response = requests.post(
         f"{API_BASE}/analyze",
         files={"file": full_card_front.getvalue()}
     )
 
     if response.status_code != 200:
-        st.error("Full card analysis failed.")
+        st.error("Card analysis failed.")
         st.stop()
 
     full_result = response.json()
@@ -119,15 +169,11 @@ if st.button("Run Analysis"):
     vertical_ratio = full_result["vertical_ratio"]
     edge_score = full_result["edge_score"]
 
-    # --------------------------------------------------------
     # CORNER ANALYSIS
-    # --------------------------------------------------------
-
     corner_score = 0.5
 
     if len(corner_files) > 0:
         scores = []
-
         for c in corner_files:
             r = requests.post(
                 f"{API_BASE}/analyze_corner",
@@ -135,13 +181,8 @@ if st.button("Run Analysis"):
             )
             if r.status_code == 200:
                 scores.append(r.json()["corner_score"])
-
         if len(scores) > 0:
             corner_score = float(np.mean(scores))
-
-    # --------------------------------------------------------
-    # GRADES
-    # --------------------------------------------------------
 
     experimental_grade = compute_experimental_grade(
         horizontal_ratio,
@@ -157,10 +198,6 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    # ========================================================
-    # DISPLAY RESULTS
-    # ========================================================
-
     st.markdown("## Calibrated Grade (v3)")
     st.markdown(f"### {calibrated_grade}")
 
@@ -168,17 +205,12 @@ if st.button("Run Analysis"):
     st.markdown(f"### {experimental_grade}")
 
     st.markdown("---")
-    st.markdown("### Raw Feature Values")
-
     st.write("Horizontal Ratio:", round(horizontal_ratio, 4))
     st.write("Vertical Ratio:", round(vertical_ratio, 4))
     st.write("Edge Score:", round(edge_score, 4))
     st.write("Corner Score:", round(corner_score, 4))
 
-    # ========================================================
-    # SAVE TO SUPABASE
-    # ========================================================
-
+    # SAVE DATA
     card_id = str(uuid.uuid4())
 
     data = {
@@ -190,34 +222,30 @@ if st.button("Run Analysis"):
         "corner_score": corner_score,
         "experimental_grade": experimental_grade,
         "calibrated_grade": calibrated_grade,
+        "submitted_by": user_email,
         "created_at": str(datetime.now())
     }
 
-    save = requests.post(TABLE_URL, json=data, headers=headers)
-
-    if save.status_code == 201:
-        st.success("Submission saved.")
-    else:
-        st.error("Database error.")
+    requests.post(TABLE_URL, json=data, headers=headers)
 
 # ============================================================
 # ADMIN DASHBOARD
 # ============================================================
 
-st.markdown("---")
-st.markdown("## Admin Dashboard")
+if user_role == "admin":
 
-analytics_response = requests.get(TABLE_URL, headers=headers)
+    st.markdown("---")
+    st.markdown("## Admin Dashboard")
 
-if analytics_response.status_code == 200:
+    analytics = requests.get(TABLE_URL, headers=headers)
 
-    df = pd.DataFrame(analytics_response.json())
+    if analytics.status_code == 200:
 
-    if len(df) > 0:
+        df = pd.DataFrame(analytics.json())
 
         st.write("Total Submissions:", len(df))
 
-        if "psa_actual_grade" in df.columns:
+        if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
 
             df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"])
 
@@ -235,5 +263,6 @@ if analytics_response.status_code == 200:
                 st.subheader("Error Distribution")
                 st.bar_chart(df_valid["error"])
 
-        st.subheader("Grade Distribution")
-        st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
+        if "calibrated_grade" in df.columns:
+            st.subheader("Grade Distribution")
+            st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
