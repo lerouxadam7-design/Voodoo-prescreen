@@ -277,8 +277,6 @@ if user_role == "admin":
         if "calibrated_grade" in df.columns:
             st.subheader("Calibrated Grade Distribution")
             st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
-        import sklearn
-        st.write("sklearn version:", sklearn.__version__)
 
     # ========================================================
     # RE-SCORE BUTTON
