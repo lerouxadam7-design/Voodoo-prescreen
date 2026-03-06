@@ -233,7 +233,79 @@ if user_role == "admin":
 
                 st.subheader("Error Distribution")
                 st.bar_chart(df_valid["error"])
+    # ============================================================
+    # SLAB COLLECTION TRACKING
+    # ============================================================
 
+    st.markdown("---")
+    st.subheader("Slab Collection Tracking")
+
+    if "psa_is_graded" in df.columns:
+
+        slabs = df[df["psa_is_graded"] == True]
+
+        st.write("Total Slabs:", len(slabs))
+        st.write("Unique Cards:", slabs["card_id"].nunique())
+
+        # Progress milestones
+        milestones = [50, 75, 100]
+        for m in milestones:
+            percent = min(len(slabs) / m, 1.0)
+            st.write(f"Progress toward {m} slabs:")
+            st.progress(percent)
+
+    # ------------------------------------------------------------
+    # Grade Tier Distribution
+    # ------------------------------------------------------------
+
+    if "psa_actual_grade" in df.columns:
+
+        st.subheader("PSA Grade Distribution (Slabs Only)")
+
+        slab_grades = df[df["psa_is_graded"] == True]["psa_actual_grade"]
+
+        if len(slab_grades) > 0:
+            st.bar_chart(slab_grades.value_counts().sort_index())
+
+    # ------------------------------------------------------------
+    # Error by Grade Tier
+    # ------------------------------------------------------------
+
+    if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
+
+        df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
+
+        if len(df_valid) > 0:
+
+            df_valid["error"] = (
+                df_valid["calibrated_grade"]
+                - df_valid["psa_actual_grade"]
+            )
+
+            st.subheader("Mean Error by Grade Tier")
+            tier_error = df_valid.groupby("psa_actual_grade")["error"].mean()
+            st.bar_chart(tier_error)
+
+    # ------------------------------------------------------------
+    # Feature Stability Monitor
+    # ------------------------------------------------------------
+
+    if all(col in df.columns for col in [
+        "horizontal_ratio",
+        "vertical_ratio",
+        "corner_score",
+        "edge_score"
+    ]):
+
+        st.subheader("Feature Averages (All Data)")
+
+        df["centering_raw"] = (
+            df["horizontal_ratio"] + df["vertical_ratio"]
+        ) / 2
+
+        st.write("Average Centering:", round(df["centering_raw"].mean(), 3))
+        st.write("Average Corner Score:", round(df["corner_score"].mean(), 3))
+        st.write("Average Edge Score:", round(df["edge_score"].mean(), 3))
         # ----------------------------------------------------
         # RE-SCORE BUTTON
         # ----------------------------------------------------
