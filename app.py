@@ -227,6 +227,10 @@ if user_role == "admin":
         df = pd.DataFrame(analytics.json())
         st.write("Total Submissions:", len(df))
 
+        # -------------------------------
+        # Linear Model Metrics
+        # -------------------------------
+
         if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
 
             df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
@@ -237,46 +241,75 @@ if user_role == "admin":
                     df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
                 )
 
-                mae = abs(df_valid["error"]).mean()
-                bias = df_valid["error"].mean()
+                mae_linear = abs(df_valid["error"]).mean()
+                bias_linear = df_valid["error"].mean()
 
                 st.subheader("Linear Model Metrics")
-                st.write("MAE:", round(mae, 3))
-                st.write("Bias:", round(bias, 3))
+                st.write("MAE:", round(mae_linear, 3))
+                st.write("Bias:", round(bias_linear, 3))
 
-        # ----------------------------------------------------
-        # SAFE GBM TEST
-        # ----------------------------------------------------
+        # -------------------------------
+        # Gradient Boosting Cross-Validation
+        # -------------------------------
 
-        from sklearn.model_selection import KFold
-        from sklearn.metrics import mean_absolute_error
+        st.markdown("---")
+        st.subheader("Gradient Boosting (5-Fold Cross Validation)")
 
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        try:
+            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.model_selection import KFold
+            from sklearn.metrics import mean_absolute_error
 
-        mae_scores = []
+            df_ml = df.dropna(subset=[
+                "psa_actual_grade",
+                "horizontal_ratio",
+                "vertical_ratio",
+                "edge_score",
+                "corner_score"
+            ]).copy()
 
-        for train_index, test_index in kf.split(X):
+            if len(df_ml) > 10:
 
-            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+                df_ml["centering_raw"] = (
+                    df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
+                ) / 2
+                df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
 
-            gbm = GradientBoostingRegressor(
-                n_estimators=200,
-                learning_rate=0.05,
-                max_depth=3,
-                random_state=42
-            )
+                X = df_ml[[
+                    "centering_fixed",
+                    "edge_score",
+                    "corner_score"
+                ]]
+                y = df_ml["psa_actual_grade"]
 
-            gbm.fit(X_train, y_train)
-            preds = gbm.predict(X_test)
+                kf = KFold(n_splits=5, shuffle=True, random_state=42)
+                mae_scores = []
 
-            mae_scores.append(mean_absolute_error(y_test, preds))
+                for train_index, test_index in kf.split(X):
 
-        st.write("GBM Cross-Validated MAE:", round(np.mean(mae_scores), 3))
+                    X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+                    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
-        # ----------------------------------------------------
-        # RE-SCORE BUTTON
-        # ----------------------------------------------------
+                    gbm = GradientBoostingRegressor(
+                        n_estimators=200,
+                        learning_rate=0.05,
+                        max_depth=3,
+                        random_state=42
+                    )
+
+                    gbm.fit(X_train, y_train)
+                    preds = gbm.predict(X_test)
+
+                    mae_scores.append(mean_absolute_error(y_test, preds))
+
+                st.write("GBM Cross-Validated MAE:", round(np.mean(mae_scores), 3))
+
+        except:
+            st.info("scikit-learn not installed in environment.")
+
+        # -------------------------------
+        # Re-score Button
+        # -------------------------------
 
         st.markdown("---")
         st.subheader("Model Maintenance")
@@ -288,7 +321,7 @@ if user_role == "admin":
                 if pd.isna(row.get("horizontal_ratio")):
                     continue
 
-                calibrated_grade = compute_linear_grade(
+                new_grade = compute_linear_grade(
                     row["horizontal_ratio"],
                     row["vertical_ratio"],
                     row["edge_score"],
@@ -306,7 +339,7 @@ if user_role == "admin":
                     "vertical_ratio": row["vertical_ratio"],
                     "edge_score": row["edge_score"],
                     "corner_score": row["corner_score"],
-                    "calibrated_grade": calibrated_grade,
+                    "calibrated_grade": new_grade,
                     "submitted_by": user_email,
                     "created_at": str(datetime.now())
                 }
