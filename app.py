@@ -47,7 +47,7 @@ MODEL_VERSION = "v3-calibrated"
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
 
-API_BASE = "https://YOUR-RENDER-API.onrender.com"  # replace
+API_BASE = "https://voodoo-centering-api.onrender.com"  # replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 STORAGE_BUCKET = "card-images"
