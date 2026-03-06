@@ -306,6 +306,7 @@ if user_role == "admin":
 
         except:
             st.info("scikit-learn not installed in environment.")
+            df_ml = df.drop_duplicates(subset=["card_id"]).dropna(...)
 
         # -------------------------------
         # Re-score Button
