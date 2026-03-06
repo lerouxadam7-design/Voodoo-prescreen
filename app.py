@@ -42,7 +42,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3-linear"
+MODEL_VERSION = "v4-refined-linear"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -120,17 +120,6 @@ full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"
 # GRADE FUNCTIONS
 # ============================================================
 
-def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
-    centering_raw = (horizontal_ratio + vertical_ratio) / 2
-    centering_fixed = 1 - centering_raw
-    grade = (
-        6.49
-        + 4.37 * centering_fixed
-        - 0.17 * edge_score
-        + 4.92 * corner_score
-    )
-    return round(max(1, min(10, grade)), 2)
-
 def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
     centering_score = 10 - ((1 - centering_raw) * 5)
@@ -142,6 +131,30 @@ def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, cor
         edge_scaled * 0.2
     )
     return round(max(1, min(10, final)), 2)
+
+
+def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+
+    # PSA-style: worst centering direction
+    centering_raw = min(horizontal_ratio, vertical_ratio)
+    centering_fixed = 1 - centering_raw
+
+    grade = (
+        6.49
+        + 4.6 * centering_fixed
+        - 0.17 * edge_score
+        + 5.4 * corner_score
+    )
+
+    # Soft behavioral caps based on corner strength
+    if corner_score < 0.15:
+        grade = min(grade, 7.5)
+    elif corner_score < 0.25:
+        grade = min(grade, 8.5)
+    elif corner_score < 0.35:
+        grade = min(grade, 9.0)
+
+    return round(max(1, min(10, grade)), 2)
 
 # ============================================================
 # RUN ANALYSIS
@@ -183,7 +196,7 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    st.markdown("## Calibrated Grade (Linear v3)")
+    st.markdown("## Refined Linear Grade (v4)")
     st.markdown(f"### {calibrated_grade}")
 
     st.markdown("## Experimental Grade (v2)")
@@ -227,10 +240,6 @@ if user_role == "admin":
         df = pd.DataFrame(analytics.json())
         st.write("Total Submissions:", len(df))
 
-        # -------------------------------
-        # Linear Model Metrics
-        # -------------------------------
-
         if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
 
             df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
@@ -244,16 +253,16 @@ if user_role == "admin":
                 mae_linear = abs(df_valid["error"]).mean()
                 bias_linear = df_valid["error"].mean()
 
-                st.subheader("Linear Model Metrics")
+                st.subheader("Refined Linear Model Metrics")
                 st.write("MAE:", round(mae_linear, 3))
                 st.write("Bias:", round(bias_linear, 3))
 
-        # -------------------------------
-        # Gradient Boosting Cross-Validation
-        # -------------------------------
+        # ----------------------------------------------------
+        # GBM CROSS VALIDATION
+        # ----------------------------------------------------
 
         st.markdown("---")
-        st.subheader("Gradient Boosting (5-Fold Cross Validation)")
+        st.subheader("Gradient Boosting (5-Fold CV)")
 
         try:
             from sklearn.ensemble import GradientBoostingRegressor
@@ -306,16 +315,15 @@ if user_role == "admin":
 
         except:
             st.info("scikit-learn not installed in environment.")
-            df_ml = df.drop_duplicates(subset=["card_id"]).dropna(...)
 
-        # -------------------------------
-        # Re-score Button
-        # -------------------------------
+        # ----------------------------------------------------
+        # RE-SCORE BUTTON
+        # ----------------------------------------------------
 
         st.markdown("---")
         st.subheader("Model Maintenance")
 
-        if st.button("Re-Score All Cards With Current Linear Model"):
+        if st.button("Re-Score All Cards With Current Refined Linear Model"):
 
             for _, row in df.iterrows():
 
@@ -347,4 +355,4 @@ if user_role == "admin":
 
                 requests.post(TABLE_URL, json=new_data, headers=headers)
 
-            st.success("Re-scored under current model version.")
+            st.success("Re-scored under refined linear model.")
