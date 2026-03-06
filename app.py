@@ -1,217 +1,320 @@
-import cv2
+import streamlit as st
+import requests
 import numpy as np
-
+import pandas as pd
+from datetime import datetime
+import uuid
 
 # ============================================================
-# RAW FULL CARD FEATURE ENGINE
+# DESIGN THEME
 # ============================================================
 
-class VoodooRawEngine:
+st.set_page_config(page_title="Voodoo Sports Grading")
 
-    def __init__(self):
-        pass
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(
+        90deg,
+        #3F1D6A 0%,
+        #522C87 50%,
+        #5F3A96 100%
+    ) !important;
+}
+h1, h2, h3 {
+    color: #C9A44D !important;
+}
+.stButton>button {
+    background-color: #C9A44D !important;
+    color: black !important;
+    border-radius: 10px !important;
+    font-weight: bold !important;
+}
+label {
+    color: white !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
-    # Detect dominant card bounding box
-    # ---------------------------------------------------------
-    def detect_card_bbox(self, image):
+st.title("VOODOO SPORTS GRADING")
 
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (7, 7), 0)
+# ============================================================
+# CONFIG
+# ============================================================
 
-        thresh = cv2.adaptiveThreshold(
-            blur,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            51,
-            5
-        )
+MODEL_VERSION = "v3-calibrated"
 
-        kernel = np.ones((5, 5), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+API_BASE = "https://voodoo-centering-api.onrender.com"  # Replace
 
-        contours, _ = cv2.findContours(
-            thresh,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
+TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
-        if not contours:
-            return None
+headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
-        largest = max(contours, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(largest)
+# ============================================================
+# AUTHORIZED USERS
+# ============================================================
 
-        image_area = image.shape[0] * image.shape[1]
-        if w * h < image_area * 0.30:
-            return None
+st.markdown("### Access")
 
-        return x, y, w, h
+user_email = st.text_input("Enter Access Email")
 
-    # ---------------------------------------------------------
-    # BORDER-BASED CENTERING (NEW)
-    # ---------------------------------------------------------
-    def compute_centering(self, card_img):
+if user_email:
+    user_check = requests.get(
+        f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
+        headers=headers
+    )
 
-        gray = cv2.cvtColor(card_img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
+    if user_check.status_code != 200:
+        st.error("User lookup failed.")
+        st.stop()
 
-        h, w = edges.shape
+    user_data = user_check.json()
 
-        left_distances = []
-        right_distances = []
+    if len(user_data) == 0:
+        st.warning("Invite-only beta. Access restricted.")
+        st.stop()
 
-        # Measure horizontal border thickness
-        for y in range(int(h * 0.2), int(h * 0.8)):
-            row = edges[y, :]
+    user_role = user_data[0]["role"]
+else:
+    st.stop()
 
-            indices = np.where(row > 0)[0]
-            if len(indices) > 0:
-                left_distances.append(indices[0])
-                right_distances.append(w - indices[-1])
+# ============================================================
+# CARD INFO
+# ============================================================
 
-        top_distances = []
-        bottom_distances = []
+st.markdown("## Card Information")
 
-        # Measure vertical border thickness
-        for x in range(int(w * 0.2), int(w * 0.8)):
-            col = edges[:, x]
+manufacturer = st.text_input("Manufacturer")
+stock_type = st.selectbox(
+    "Stock Type",
+    ["paper", "chrome", "refractor", "foil", "other"]
+)
 
-            indices = np.where(col > 0)[0]
-            if len(indices) > 0:
-                top_distances.append(indices[0])
-                bottom_distances.append(h - indices[-1])
+psa_is_graded = st.checkbox("Is this card already PSA graded?")
 
-        if not left_distances or not top_distances:
-            return 0.5, 0.5
+psa_actual_grade = None
+if psa_is_graded:
+    psa_actual_grade = st.number_input(
+        "Enter PSA Actual Grade",
+        min_value=1.0,
+        max_value=10.0,
+        step=0.5
+    )
 
-        left_mean = np.mean(left_distances)
-        right_mean = np.mean(right_distances)
+# ============================================================
+# IMAGE UPLOADS
+# ============================================================
 
-        top_mean = np.mean(top_distances)
-        bottom_mean = np.mean(bottom_distances)
+st.markdown("## Upload Card Images")
 
-        horizontal_ratio = min(left_mean, right_mean) / max(left_mean, right_mean)
-        vertical_ratio = min(top_mean, bottom_mean) / max(top_mean, bottom_mean)
+full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "png"])
+full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
 
-        return float(horizontal_ratio), float(vertical_ratio)
+st.markdown("### Optional Corner Close-Ups")
 
-    # ---------------------------------------------------------
-    # EDGE INTEGRITY
-    # ---------------------------------------------------------
-    def compute_edge_score(self, card_img):
+corner1 = st.file_uploader("Corner 1", type=["jpg","jpeg","png"], key="corner1")
+corner2 = st.file_uploader("Corner 2", type=["jpg","jpeg","png"], key="corner2")
+corner3 = st.file_uploader("Corner 3", type=["jpg","jpeg","png"], key="corner3")
+corner4 = st.file_uploader("Corner 4", type=["jpg","jpeg","png"], key="corner4")
 
-        h, w = card_img.shape[:2]
-        strip = int(min(h, w) * 0.05)
+corner_files = [c for c in [corner1, corner2, corner3, corner4] if c is not None]
 
-        strips = [
-            card_img[0:strip, :],
-            card_img[h-strip:h, :],
-            card_img[:, 0:strip],
-            card_img[:, w-strip:w]
-        ]
+# ============================================================
+# GRADE FUNCTIONS
+# ============================================================
 
+def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+    centering_score = 10 - ((1 - centering_raw) * 5)
+    edge_scaled = edge_score * 20
+    corner_scaled = corner_score * 20
+    final = (
+        centering_score * 0.4 +
+        corner_scaled * 0.4 +
+        edge_scaled * 0.2
+    )
+    return round(max(1, min(10, final)), 2)
+
+def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+    centering_fixed = 1 - centering_raw
+    grade = (
+        6.49
+        + 4.37 * centering_fixed
+        - 0.17 * edge_score
+        + 4.92 * corner_score
+    )
+    return round(max(1, min(10, grade)), 2)
+
+# ============================================================
+# RUN ANALYSIS
+# ============================================================
+
+if st.button("Run Analysis"):
+
+    if full_card_front is None:
+        st.error("Front card image required.")
+        st.stop()
+
+    response = requests.post(
+        f"{API_BASE}/analyze",
+        files={"file": full_card_front.getvalue()}
+    )
+
+    if response.status_code != 200:
+        st.error("Card analysis failed.")
+        st.stop()
+
+    result = response.json()
+
+    horizontal_ratio = result["horizontal_ratio"]
+    vertical_ratio = result["vertical_ratio"]
+    edge_score = result["edge_score"]
+
+    corner_score = 0.5
+
+    if len(corner_files) > 0:
         scores = []
+        for c in corner_files:
+            r = requests.post(
+                f"{API_BASE}/analyze_corner",
+                files={"file": c.getvalue()}
+            )
+            if r.status_code == 200:
+                scores.append(r.json()["corner_score"])
+        if len(scores) > 0:
+            corner_score = float(np.mean(scores))
 
-        for s in strips:
-            gray = cv2.cvtColor(s, cv2.COLOR_BGR2GRAY)
-            blur = cv2.GaussianBlur(gray, (9, 9), 0)
+    experimental_grade = compute_experimental_grade(
+        horizontal_ratio,
+        vertical_ratio,
+        edge_score,
+        corner_score
+    )
 
-            variance = np.var(blur)
-            edges = cv2.Canny(blur, 75, 200)
-            edge_density = np.mean(edges)
+    calibrated_grade = compute_calibrated_grade(
+        horizontal_ratio,
+        vertical_ratio,
+        edge_score,
+        corner_score
+    )
 
-            edge_norm = edge_density / 255
-            var_norm = variance / (255**2)
+    st.markdown("## Calibrated Grade (Primary)")
+    st.markdown(f"### {calibrated_grade}")
 
-            score = (edge_norm * 0.7) - (var_norm * 0.3)
-            scores.append(score)
+    st.markdown("## Experimental Grade (Secondary)")
+    st.markdown(f"### {experimental_grade}")
 
-        normalized = np.clip(np.mean(scores), 0, 1)
-        return float(normalized)
+    card_id = str(uuid.uuid4())
 
-    # ---------------------------------------------------------
-    # MAIN ANALYSIS
-    # ---------------------------------------------------------
-    def analyze_array(self, image_array):
+    data = {
+        "card_id": card_id,
+        "model_version": MODEL_VERSION,
+        "manufacturer": manufacturer,
+        "stock_type": stock_type,
+        "psa_is_graded": psa_is_graded,
+        "psa_actual_grade": psa_actual_grade,
+        "horizontal_ratio": horizontal_ratio,
+        "vertical_ratio": vertical_ratio,
+        "edge_score": edge_score,
+        "corner_score": corner_score,
+        "experimental_grade": experimental_grade,
+        "calibrated_grade": calibrated_grade,
+        "submitted_by": user_email,
+        "created_at": str(datetime.now())
+    }
 
-        target_width = 1000
-        h, w = image_array.shape[:2]
-        scale = target_width / w
-        image = cv2.resize(image_array, (target_width, int(h * scale)))
+    requests.post(TABLE_URL, json=data, headers=headers)
 
-        bbox = self.detect_card_bbox(image)
+    st.success("Submission saved.")
 
-        if bbox is None:
-            return {
-                "horizontal_ratio": 0.5,
-                "vertical_ratio": 0.5,
-                "edge_score": 0.5,
-                "confidence": 0.0
+# ============================================================
+# ADMIN DASHBOARD
+# ============================================================
+
+if user_role == "admin":
+
+    st.markdown("---")
+    st.markdown("## Admin Dashboard")
+
+    analytics = requests.get(TABLE_URL, headers=headers)
+
+    if analytics.status_code == 200:
+
+        df = pd.DataFrame(analytics.json())
+
+        st.write("Total Submissions:", len(df))
+
+        if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
+
+            df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"])
+
+            if len(df_valid) > 0:
+
+                df_valid["error"] = df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
+
+                mae = abs(df_valid["error"]).mean()
+                bias = df_valid["error"].mean()
+
+                st.subheader("Calibration Metrics")
+                st.write("MAE:", round(mae, 3))
+                st.write("Bias:", round(bias, 3))
+
+                st.subheader("Error Distribution")
+                st.bar_chart(df_valid["error"])
+
+        # Version comparison
+        if "model_version" in df.columns:
+            st.subheader("Submissions by Model Version")
+            st.bar_chart(df["model_version"].value_counts())
+
+        if "calibrated_grade" in df.columns:
+            st.subheader("Calibrated Grade Distribution")
+            st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
+
+    # ========================================================
+    # RE-SCORE BUTTON
+    # ========================================================
+
+    st.markdown("---")
+    st.subheader("Model Maintenance")
+
+    if st.button("Re-Score All Cards With Current Model"):
+
+        for _, row in df.iterrows():
+
+            if pd.isna(row.get("horizontal_ratio")):
+                continue
+
+            calibrated_grade = compute_calibrated_grade(
+                row["horizontal_ratio"],
+                row["vertical_ratio"],
+                row["edge_score"],
+                row["corner_score"]
+            )
+
+            new_data = {
+                "card_id": row["card_id"],
+                "model_version": MODEL_VERSION,
+                "manufacturer": row.get("manufacturer"),
+                "stock_type": row.get("stock_type"),
+                "psa_is_graded": row.get("psa_is_graded"),
+                "psa_actual_grade": row.get("psa_actual_grade"),
+                "horizontal_ratio": row["horizontal_ratio"],
+                "vertical_ratio": row["vertical_ratio"],
+                "edge_score": row["edge_score"],
+                "corner_score": row["corner_score"],
+                "calibrated_grade": calibrated_grade,
+                "submitted_by": user_email,
+                "created_at": str(datetime.now())
             }
 
-        x, y, w2, h2 = bbox
-        card = image[y:y+h2, x:x+w2]
+            requests.post(TABLE_URL, json=new_data, headers=headers)
 
-        h_ratio, v_ratio = self.compute_centering(card)
-        edge_score = self.compute_edge_score(card)
-
-        return {
-            "horizontal_ratio": h_ratio,
-            "vertical_ratio": v_ratio,
-            "edge_score": edge_score,
-            "confidence": 1.0
-        }
-
-
-# ============================================================
-# CLOSE-UP CORNER ENGINE (UNCHANGED)
-# ============================================================
-
-class VoodooCornerCloseupEngine:
-
-    def __init__(self):
-        pass
-
-    def analyze_array(self, image_array):
-
-        target_width = 600
-        h, w = image_array.shape[:2]
-        scale = target_width / w
-        image = cv2.resize(image_array, (target_width, int(h * scale)))
-
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        edges = cv2.Canny(blur, 75, 200)
-
-        h2, w2 = edges.shape
-        radius = int(min(h2, w2) * 0.25)
-
-        y_idx, x_idx = np.ogrid[:radius, :radius]
-        mask = (x_idx**2 + y_idx**2) <= radius**2
-
-        region = edges[0:radius, 0:radius]
-        masked_edges = region[mask]
-
-        if masked_edges.size == 0:
-            return {"corner_score": 0.5, "confidence": 0.0}
-
-        edge_density = np.mean(masked_edges) / 255
-
-        ys, xs = np.where(region > 0)
-        if len(xs) == 0:
-            return {"corner_score": 0.5, "confidence": 0.0}
-
-        distances = np.sqrt(xs**2 + ys**2)
-        avg_distance = np.mean(distances) / radius
-
-        score = (edge_density ** 0.5) * (1 - avg_distance)
-        score = score * 2
-
-        return {
-            "corner_score": float(np.clip(score, 0, 1)),
-            "confidence": 1.0
-        }
+        st.success("Re-scored under current model version.")
