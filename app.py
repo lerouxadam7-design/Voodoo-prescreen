@@ -42,7 +42,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v4-refined-linear"
+MODEL_VERSION = "v3-linear-locked"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -117,42 +117,20 @@ full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "pn
 full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
 
 # ============================================================
-# GRADE FUNCTIONS
+# LOCKED LINEAR CALIBRATED MODEL
 # ============================================================
-
-def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
-    centering_raw = (horizontal_ratio + vertical_ratio) / 2
-    centering_score = 10 - ((1 - centering_raw) * 5)
-    edge_scaled = edge_score * 20
-    corner_scaled = corner_score * 20
-    final = (
-        centering_score * 0.4 +
-        corner_scaled * 0.4 +
-        edge_scaled * 0.2
-    )
-    return round(max(1, min(10, final)), 2)
-
 
 def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
 
-    # PSA-style: worst centering direction
-    centering_raw = min(horizontal_ratio, vertical_ratio)
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
     centering_fixed = 1 - centering_raw
 
     grade = (
         6.49
-        + 4.6 * centering_fixed
+        + 4.37 * centering_fixed
         - 0.17 * edge_score
-        + 5.4 * corner_score
+        + 4.92 * corner_score
     )
-
-    # Soft behavioral caps based on corner strength
-    if corner_score < 0.15:
-        grade = min(grade, 7.5)
-    elif corner_score < 0.25:
-        grade = min(grade, 8.5)
-    elif corner_score < 0.35:
-        grade = min(grade, 9.0)
 
     return round(max(1, min(10, grade)), 2)
 
@@ -182,13 +160,6 @@ if st.button("Run Analysis"):
     edge_score = result["edge_score"]
     corner_score = result["corner_score"]
 
-    experimental_grade = compute_experimental_grade(
-        horizontal_ratio,
-        vertical_ratio,
-        edge_score,
-        corner_score
-    )
-
     calibrated_grade = compute_linear_grade(
         horizontal_ratio,
         vertical_ratio,
@@ -196,11 +167,12 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    st.markdown("## Refined Linear Grade (v4)")
+    st.markdown("## Calibrated Grade (v3 Locked)")
     st.markdown(f"### {calibrated_grade}")
 
-    st.markdown("## Experimental Grade (v2)")
-    st.markdown(f"### {experimental_grade}")
+    # ========================================================
+    # SAVE TO SUPABASE
+    # ========================================================
 
     card_id = str(uuid.uuid4())
 
@@ -215,7 +187,6 @@ if st.button("Run Analysis"):
         "vertical_ratio": vertical_ratio,
         "edge_score": edge_score,
         "corner_score": corner_score,
-        "experimental_grade": experimental_grade,
         "calibrated_grade": calibrated_grade,
         "submitted_by": user_email,
         "created_at": str(datetime.now())
@@ -242,79 +213,26 @@ if user_role == "admin":
 
         if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
 
-            df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
+            df_valid = df.dropna(
+                subset=["psa_actual_grade", "calibrated_grade"]
+            ).copy()
 
             if len(df_valid) > 0:
 
                 df_valid.loc[:, "error"] = (
-                    df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
+                    df_valid["calibrated_grade"]
+                    - df_valid["psa_actual_grade"]
                 )
 
-                mae_linear = abs(df_valid["error"]).mean()
-                bias_linear = df_valid["error"].mean()
+                mae = abs(df_valid["error"]).mean()
+                bias = df_valid["error"].mean()
 
-                st.subheader("Refined Linear Model Metrics")
-                st.write("MAE:", round(mae_linear, 3))
-                st.write("Bias:", round(bias_linear, 3))
+                st.subheader("Locked Linear Model Metrics")
+                st.write("MAE:", round(mae, 3))
+                st.write("Bias:", round(bias, 3))
 
-        # ----------------------------------------------------
-        # GBM CROSS VALIDATION
-        # ----------------------------------------------------
-
-        st.markdown("---")
-        st.subheader("Gradient Boosting (5-Fold CV)")
-
-        try:
-            from sklearn.ensemble import GradientBoostingRegressor
-            from sklearn.model_selection import KFold
-            from sklearn.metrics import mean_absolute_error
-
-            df_ml = df.dropna(subset=[
-                "psa_actual_grade",
-                "horizontal_ratio",
-                "vertical_ratio",
-                "edge_score",
-                "corner_score"
-            ]).copy()
-
-            if len(df_ml) > 10:
-
-                df_ml["centering_raw"] = (
-                    df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
-                ) / 2
-                df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
-
-                X = df_ml[[
-                    "centering_fixed",
-                    "edge_score",
-                    "corner_score"
-                ]]
-                y = df_ml["psa_actual_grade"]
-
-                kf = KFold(n_splits=5, shuffle=True, random_state=42)
-                mae_scores = []
-
-                for train_index, test_index in kf.split(X):
-
-                    X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-                    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-
-                    gbm = GradientBoostingRegressor(
-                        n_estimators=200,
-                        learning_rate=0.05,
-                        max_depth=3,
-                        random_state=42
-                    )
-
-                    gbm.fit(X_train, y_train)
-                    preds = gbm.predict(X_test)
-
-                    mae_scores.append(mean_absolute_error(y_test, preds))
-
-                st.write("GBM Cross-Validated MAE:", round(np.mean(mae_scores), 3))
-
-        except:
-            st.info("scikit-learn not installed in environment.")
+                st.subheader("Error Distribution")
+                st.bar_chart(df_valid["error"])
 
         # ----------------------------------------------------
         # RE-SCORE BUTTON
@@ -323,7 +241,7 @@ if user_role == "admin":
         st.markdown("---")
         st.subheader("Model Maintenance")
 
-        if st.button("Re-Score All Cards With Current Refined Linear Model"):
+        if st.button("Re-Score All Cards With Locked Linear Model"):
 
             for _, row in df.iterrows():
 
@@ -355,4 +273,4 @@ if user_role == "admin":
 
                 requests.post(TABLE_URL, json=new_data, headers=headers)
 
-            st.success("Re-scored under refined linear model.")
+            st.success("Re-scored under locked linear model.")
