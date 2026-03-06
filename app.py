@@ -248,54 +248,31 @@ if user_role == "admin":
         # SAFE GBM TEST
         # ----------------------------------------------------
 
-        st.markdown("---")
-        st.subheader("Gradient Boosting (Test Only)")
+        from sklearn.model_selection import KFold
+        from sklearn.metrics import mean_absolute_error
 
-        try:
-            from sklearn.ensemble import GradientBoostingRegressor
-            from sklearn.metrics import mean_absolute_error
+        kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-            df_ml = df.dropna(subset=[
-                "psa_actual_grade",
-                "horizontal_ratio",
-                "vertical_ratio",
-                "edge_score",
-                "corner_score"
-            ]).copy()
+        mae_scores = []
 
-            if len(df_ml) > 5:
+        for train_index, test_index in kf.split(X):
 
-                df_ml["centering_raw"] = (
-                    df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
-                ) / 2
-                df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
+            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
-                X = df_ml[[
-                    "centering_fixed",
-                    "edge_score",
-                    "corner_score"
-                ]]
-                y = df_ml["psa_actual_grade"]
+            gbm = GradientBoostingRegressor(
+                n_estimators=200,
+                learning_rate=0.05,
+                max_depth=3,
+                random_state=42
+            )
 
-                gbm = GradientBoostingRegressor(
-                    n_estimators=300,
-                    learning_rate=0.05,
-                    max_depth=3,
-                    random_state=42
-                )
+            gbm.fit(X_train, y_train)
+            preds = gbm.predict(X_test)
 
-                gbm.fit(X, y)
+            mae_scores.append(mean_absolute_error(y_test, preds))
 
-                preds = gbm.predict(X)
-
-                mae_gbm = mean_absolute_error(y, preds)
-                bias_gbm = (preds - y).mean()
-
-                st.write("GBM MAE:", round(mae_gbm, 3))
-                st.write("GBM Bias:", round(bias_gbm, 3))
-
-        except:
-            st.info("scikit-learn not installed in environment.")
+        st.write("GBM Cross-Validated MAE:", round(np.mean(mae_scores), 3))
 
         # ----------------------------------------------------
         # RE-SCORE BUTTON
