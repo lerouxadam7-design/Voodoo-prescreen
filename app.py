@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import uuid
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error
 
 # ============================================================
 # DESIGN THEME
@@ -42,11 +44,11 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3.1-calibrated"
+MODEL_VERSION = "v3-linear"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-API_BASE = "https://voodoo-centering-api.onrender.com"  # Replace
+API_BASE = "https://voodoo-centering-api.onrender.com"  # replace
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
@@ -65,6 +67,7 @@ st.markdown("### Access")
 user_email = st.text_input("Enter Access Email")
 
 if user_email:
+
     user_check = requests.get(
         f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
         headers=headers
@@ -97,8 +100,8 @@ stock_type = st.selectbox(
 )
 
 psa_is_graded = st.checkbox("Is this card already PSA graded?")
-
 psa_actual_grade = None
+
 if psa_is_graded:
     psa_actual_grade = st.number_input(
         "Enter PSA Actual Grade",
@@ -116,18 +119,22 @@ st.markdown("## Upload Card Images")
 full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "png"])
 full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
 
-st.markdown("### Optional Corner Close-Ups")
-
-corner1 = st.file_uploader("Corner 1", type=["jpg","jpeg","png"], key="corner1")
-corner2 = st.file_uploader("Corner 2", type=["jpg","jpeg","png"], key="corner2")
-corner3 = st.file_uploader("Corner 3", type=["jpg","jpeg","png"], key="corner3")
-corner4 = st.file_uploader("Corner 4", type=["jpg","jpeg","png"], key="corner4")
-
-corner_files = [c for c in [corner1, corner2, corner3, corner4] if c is not None]
-
 # ============================================================
 # GRADE FUNCTIONS
 # ============================================================
+
+def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+    centering_fixed = 1 - centering_raw
+
+    grade = (
+        6.49
+        + 4.37 * centering_fixed
+        - 0.17 * edge_score
+        + 4.92 * corner_score
+    )
+
+    return round(max(1, min(10, grade)), 2)
 
 def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
@@ -140,17 +147,6 @@ def compute_experimental_grade(horizontal_ratio, vertical_ratio, edge_score, cor
         edge_scaled * 0.2
     )
     return round(max(1, min(10, final)), 2)
-
-def compute_calibrated_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
-    centering_raw = (horizontal_ratio + vertical_ratio) / 2
-    centering_fixed = 1 - centering_raw
-    grade = (
-        6.49
-        + 4.37 * centering_fixed
-        - 0.17 * edge_score
-        + 4.92 * corner_score
-    )
-    return round(max(1, min(10, grade)), 2)
 
 # ============================================================
 # RUN ANALYSIS
@@ -176,20 +172,7 @@ if st.button("Run Analysis"):
     horizontal_ratio = result["horizontal_ratio"]
     vertical_ratio = result["vertical_ratio"]
     edge_score = result["edge_score"]
-
-    corner_score = 0.5
-
-    if len(corner_files) > 0:
-        scores = []
-        for c in corner_files:
-            r = requests.post(
-                f"{API_BASE}/analyze_corner",
-                files={"file": c.getvalue()}
-            )
-            if r.status_code == 200:
-                scores.append(r.json()["corner_score"])
-        if len(scores) > 0:
-            corner_score = float(np.mean(scores))
+    corner_score = result["corner_score"]
 
     experimental_grade = compute_experimental_grade(
         horizontal_ratio,
@@ -198,17 +181,17 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    calibrated_grade = compute_calibrated_grade(
+    calibrated_grade = compute_linear_grade(
         horizontal_ratio,
         vertical_ratio,
         edge_score,
         corner_score
     )
 
-    st.markdown("## Calibrated Grade (Primary)")
+    st.markdown("## Calibrated Grade (Linear v3)")
     st.markdown(f"### {calibrated_grade}")
 
-    st.markdown("## Experimental Grade (Secondary)")
+    st.markdown("## Experimental Grade (v2)")
     st.markdown(f"### {experimental_grade}")
 
     card_id = str(uuid.uuid4())
@@ -231,7 +214,6 @@ if st.button("Run Analysis"):
     }
 
     requests.post(TABLE_URL, json=data, headers=headers)
-
     st.success("Submission saved.")
 
 # ============================================================
@@ -253,68 +235,108 @@ if user_role == "admin":
 
         if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
 
-            df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"])
+            df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
 
             if len(df_valid) > 0:
 
-                df_valid["error"] = df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
+                df_valid.loc[:, "error"] = (
+                    df_valid["calibrated_grade"] - df_valid["psa_actual_grade"]
+                )
 
                 mae = abs(df_valid["error"]).mean()
                 bias = df_valid["error"].mean()
 
-                st.subheader("Calibration Metrics")
+                st.subheader("Linear Model Metrics")
                 st.write("MAE:", round(mae, 3))
                 st.write("Bias:", round(bias, 3))
 
-                st.subheader("Error Distribution")
-                st.bar_chart(df_valid["error"])
+        # ----------------------------------------------------
+        # GRADIENT BOOSTING TEST
+        # ----------------------------------------------------
 
-        # Version comparison
-        if "model_version" in df.columns:
-            st.subheader("Submissions by Model Version")
-            st.bar_chart(df["model_version"].value_counts())
+        st.markdown("---")
+        st.subheader("Gradient Boosting (Test Only)")
 
-        if "calibrated_grade" in df.columns:
-            st.subheader("Calibrated Grade Distribution")
-            st.bar_chart(df["calibrated_grade"].value_counts().sort_index())
+        df_ml = df.dropna(subset=[
+            "psa_actual_grade",
+            "horizontal_ratio",
+            "vertical_ratio",
+            "edge_score",
+            "corner_score"
+        ]).copy()
 
-    # ========================================================
-    # RE-SCORE BUTTON
-    # ========================================================
+        if len(df_ml) > 5:
 
-    st.markdown("---")
-    st.subheader("Model Maintenance")
+            df_ml["centering_raw"] = (
+                df_ml["horizontal_ratio"] + df_ml["vertical_ratio"]
+            ) / 2
+            df_ml["centering_fixed"] = 1 - df_ml["centering_raw"]
 
-    if st.button("Re-Score All Cards With Current Model"):
+            X = df_ml[[
+                "centering_fixed",
+                "edge_score",
+                "corner_score"
+            ]]
+            y = df_ml["psa_actual_grade"]
 
-        for _, row in df.iterrows():
-
-            if pd.isna(row.get("horizontal_ratio")):
-                continue
-
-            calibrated_grade = compute_calibrated_grade(
-                row["horizontal_ratio"],
-                row["vertical_ratio"],
-                row["edge_score"],
-                row["corner_score"]
+            gbm = GradientBoostingRegressor(
+                n_estimators=300,
+                learning_rate=0.05,
+                max_depth=3,
+                random_state=42
             )
 
-            new_data = {
-                "card_id": row["card_id"],
-                "model_version": MODEL_VERSION,
-                "manufacturer": row.get("manufacturer"),
-                "stock_type": row.get("stock_type"),
-                "psa_is_graded": row.get("psa_is_graded"),
-                "psa_actual_grade": row.get("psa_actual_grade"),
-                "horizontal_ratio": row["horizontal_ratio"],
-                "vertical_ratio": row["vertical_ratio"],
-                "edge_score": row["edge_score"],
-                "corner_score": row["corner_score"],
-                "calibrated_grade": calibrated_grade,
-                "submitted_by": user_email,
-                "created_at": str(datetime.now())
-            }
+            gbm.fit(X, y)
 
-            requests.post(TABLE_URL, json=new_data, headers=headers)
+            preds = gbm.predict(X)
 
-        st.success("Re-scored under current model version.")
+            mae_gbm = mean_absolute_error(y, preds)
+            bias_gbm = (preds - y).mean()
+
+            st.write("GBM MAE:", round(mae_gbm, 3))
+            st.write("GBM Bias:", round(bias_gbm, 3))
+
+            st.subheader("Feature Importance (GBM)")
+            for name, importance in zip(X.columns, gbm.feature_importances_):
+                st.write(f"{name}: {round(importance,3)}")
+
+        # ----------------------------------------------------
+        # RE-SCORE BUTTON
+        # ----------------------------------------------------
+
+        st.markdown("---")
+        st.subheader("Model Maintenance")
+
+        if st.button("Re-Score All Cards With Current Linear Model"):
+
+            for _, row in df.iterrows():
+
+                if pd.isna(row.get("horizontal_ratio")):
+                    continue
+
+                calibrated_grade = compute_linear_grade(
+                    row["horizontal_ratio"],
+                    row["vertical_ratio"],
+                    row["edge_score"],
+                    row["corner_score"]
+                )
+
+                new_data = {
+                    "card_id": row["card_id"],
+                    "model_version": MODEL_VERSION,
+                    "manufacturer": row.get("manufacturer"),
+                    "stock_type": row.get("stock_type"),
+                    "psa_is_graded": row.get("psa_is_graded"),
+                    "psa_actual_grade": row.get("psa_actual_grade"),
+                    "horizontal_ratio": row["horizontal_ratio"],
+                    "vertical_ratio": row["vertical_ratio"],
+                    "edge_score": row["edge_score"],
+                    "corner_score": row["corner_score"],
+                    "calibrated_grade": calibrated_grade,
+                    "submitted_by": user_email,
+                    "created_at": str(datetime.now())
+                }
+
+                requests.post(TABLE_URL, json=new_data, headers=headers)
+
+            st.success("Re-scored under current model version.")
