@@ -54,7 +54,7 @@ upload_headers = {
 }
 
 # ============================================================
-# AUTHORIZED USERS
+# AUTHORIZATION
 # ============================================================
 
 st.markdown("### Access")
@@ -82,17 +82,19 @@ else:
 st.markdown("## Card Information")
 
 manufacturer = st.text_input("Manufacturer")
-stock_type = st.selectbox("Stock Type",
-    ["paper", "chrome", "refractor", "foil", "other"])
+stock_type = st.selectbox(
+    "Stock Type",
+    ["paper", "chrome", "refractor", "foil", "other"]
+)
 
-psa_is_graded = st.checkbox("Already PSA graded?")
+psa_is_graded = st.checkbox("PSA graded?")
 psa_actual_grade = None
 
 if psa_is_graded:
     psa_actual_grade = st.number_input("PSA Grade", 1.0, 10.0, step=0.5)
 
 # ============================================================
-# IMAGE UPLOADS
+# IMAGE INPUTS
 # ============================================================
 
 st.markdown("## Upload Card Images")
@@ -100,7 +102,7 @@ st.markdown("## Upload Card Images")
 full_card_front = st.file_uploader("Front Image", ["jpg","jpeg","png"])
 full_card_back = st.file_uploader("Back Image", ["jpg","jpeg","png"])
 
-st.markdown("### Corner Images (Required: 2 worst corners)")
+st.markdown("### Corner Images (2 Required)")
 
 corner1 = st.file_uploader("Corner 1 (Required)", ["jpg","jpeg","png"])
 corner2 = st.file_uploader("Corner 2 (Required)", ["jpg","jpeg","png"])
@@ -108,7 +110,7 @@ corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg","jpeg","png"])
 corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg","jpeg","png"])
 
 # ============================================================
-# GRADE FUNCTION
+# MODEL
 # ============================================================
 
 def compute_grade(h, v, edge, corner):
@@ -130,24 +132,18 @@ def compute_grade(h, v, edge, corner):
 def decision_panel(grade, h, v, edge, corner):
 
     if grade >= 9.2:
-        rec = "STRONG SUBMIT"
-        color = st.success
+        st.success("STRONG SUBMIT")
     elif grade >= 8.5:
-        rec = "SUBMIT"
-        color = st.success
+        st.success("SUBMIT")
     elif grade >= 7.5:
-        rec = "BORDERLINE"
-        color = st.warning
+        st.warning("BORDERLINE")
     else:
-        rec = "DO NOT SUBMIT"
-        color = st.error
+        st.error("DO NOT SUBMIT")
 
     confidence = float(np.clip(1 - abs(h - v), 0, 1))
-
-    color(rec)
     st.write("Confidence:", round(confidence, 2))
 
-    st.markdown("### Why This Grade?")
+    st.markdown("### Why")
     st.write("Centering Impact:", round(1 - ((h+v)/2),3))
     st.write("Corner Impact:", round(1-corner,3))
     st.write("Edge Impact:", round(1-edge,3))
@@ -163,12 +159,18 @@ if st.button("Run Analysis"):
         st.stop()
 
     if corner1 is None or corner2 is None:
-        st.error("At least 2 corner images required")
+        st.error("2 corner images required")
         st.stop()
 
-    # ---------- API CALL ----------
-    r = requests.post(f"{API_BASE}/analyze",
-        files={"file": full_card_front.getvalue()})
+    # FULL CARD API
+    r = requests.post(
+        f"{API_BASE}/analyze",
+        files={"file": full_card_front.getvalue()}
+    )
+
+    if r.status_code != 200:
+        st.error(f"Analyze API failed: {r.text}")
+        st.stop()
 
     data = r.json()
 
@@ -176,22 +178,36 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
-    # ---------- CORNERS ----------
+    # CORNER API (SAFE)
     corner_files = [corner1, corner2]
     if corner3: corner_files.append(corner3)
     if corner4: corner_files.append(corner4)
 
     scores = []
+
     for c in corner_files:
+
         cr = requests.post(
             f"{API_BASE}/analyze_corner",
             files={"file": c.getvalue()}
         )
-        scores.append(cr.json()["corner_score"])
 
-    corner = min(scores)  # PSA logic
+        if cr.status_code != 200:
+            st.error(f"Corner API failed: {cr.text}")
+            continue
 
-    # ---------- GRADE ----------
+        try:
+            scores.append(cr.json()["corner_score"])
+        except:
+            st.error("Invalid corner response")
+            continue
+
+    if len(scores) == 0:
+        corner = 0.5
+    else:
+        corner = min(scores)
+
+    # GRADE
     grade = compute_grade(h, v, edge, corner)
 
     st.markdown("## Grade")
@@ -199,7 +215,10 @@ if st.button("Run Analysis"):
 
     decision_panel(grade, h, v, edge, corner)
 
-    # ---------- IMAGE UPLOAD ----------
+    # ========================================================
+    # SAVE IMAGES
+    # ========================================================
+
     card_id = str(uuid.uuid4())
 
     front_name = f"{card_id}_front.jpg"
@@ -221,7 +240,7 @@ if st.button("Run Analysis"):
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if full_card_back else None
 
-    # ---------- SAVE ----------
+    # SAVE DATA
     payload = {
         "card_id": card_id,
         "manufacturer": manufacturer,
@@ -244,7 +263,7 @@ if st.button("Run Analysis"):
     st.success("Saved successfully")
 
 # ============================================================
-# ADMIN DASHBOARD
+# ADMIN
 # ============================================================
 
 if user_role == "admin":
