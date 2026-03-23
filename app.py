@@ -117,11 +117,10 @@ full_card_front = st.file_uploader("Full Card - Front", type=["jpg", "jpeg", "pn
 full_card_back = st.file_uploader("Full Card - Back", type=["jpg", "jpeg", "png"])
 
 # ============================================================
-# LOCKED LINEAR CALIBRATED MODEL
+# GRADE FUNCTION (LOCKED)
 # ============================================================
 
 def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_score):
-
     centering_raw = (horizontal_ratio + vertical_ratio) / 2
     centering_fixed = 1 - centering_raw
 
@@ -133,6 +132,51 @@ def compute_linear_grade(horizontal_ratio, vertical_ratio, edge_score, corner_sc
     )
 
     return round(max(1, min(10, grade)), 2)
+
+# ============================================================
+# DECISION PANEL LOGIC
+# ============================================================
+
+def build_decision_panel(calibrated_grade, horizontal_ratio, vertical_ratio, edge_score, corner_score):
+
+    # Recommendation
+    if calibrated_grade >= 9.2:
+        recommendation = "STRONG SUBMIT"
+        color = "green"
+    elif calibrated_grade >= 8.5:
+        recommendation = "SUBMIT"
+        color = "green"
+    elif calibrated_grade >= 7.5:
+        recommendation = "BORDERLINE"
+        color = "orange"
+    else:
+        recommendation = "DO NOT SUBMIT"
+        color = "red"
+
+    # Confidence
+    centering_balance = abs(horizontal_ratio - vertical_ratio)
+    confidence = float(np.clip(1 - centering_balance, 0, 1))
+
+    # Risk
+    if confidence > 0.85:
+        risk = "Low"
+    elif confidence > 0.65:
+        risk = "Moderate"
+    else:
+        risk = "High"
+
+    # Explanation
+    centering_raw = (horizontal_ratio + vertical_ratio) / 2
+
+    return {
+        "recommendation": recommendation,
+        "color": color,
+        "confidence": round(confidence, 2),
+        "risk": risk,
+        "centering_impact": round(1 - centering_raw, 3),
+        "corner_impact": round(1 - corner_score, 3),
+        "edge_impact": round(1 - edge_score, 3)
+    }
 
 # ============================================================
 # RUN ANALYSIS
@@ -167,8 +211,38 @@ if st.button("Run Analysis"):
         corner_score
     )
 
-    st.markdown("## Calibrated Grade (v3 Locked)")
+    st.markdown("## Calibrated Grade")
     st.markdown(f"### {calibrated_grade}")
+
+    # ========================================================
+    # DECISION PANEL
+    # ========================================================
+
+    decision = build_decision_panel(
+        calibrated_grade,
+        horizontal_ratio,
+        vertical_ratio,
+        edge_score,
+        corner_score
+    )
+
+    st.markdown("---")
+    st.markdown("## Submission Decision")
+
+    if decision["color"] == "green":
+        st.success(decision["recommendation"])
+    elif decision["color"] == "orange":
+        st.warning(decision["recommendation"])
+    else:
+        st.error(decision["recommendation"])
+
+    st.write("Confidence:", decision["confidence"])
+    st.write("Risk Level:", decision["risk"])
+
+    st.markdown("### Why This Grade?")
+    st.write("Centering Impact:", decision["centering_impact"])
+    st.write("Corner Impact:", decision["corner_impact"])
+    st.write("Edge Impact:", decision["edge_impact"])
 
     # ========================================================
     # SAVE TO SUPABASE
@@ -227,122 +301,50 @@ if user_role == "admin":
                 mae = abs(df_valid["error"]).mean()
                 bias = df_valid["error"].mean()
 
-                st.subheader("Locked Linear Model Metrics")
+                st.subheader("Model Metrics")
                 st.write("MAE:", round(mae, 3))
                 st.write("Bias:", round(bias, 3))
 
                 st.subheader("Error Distribution")
                 st.bar_chart(df_valid["error"])
-    # ============================================================
-    # SLAB COLLECTION TRACKING
-    # ============================================================
+
+    # --------------------------------------------------------
+    # RE-SCORE BUTTON
+    # --------------------------------------------------------
 
     st.markdown("---")
-    st.subheader("Slab Collection Tracking")
+    st.subheader("Model Maintenance")
 
-    if "psa_is_graded" in df.columns:
+    if st.button("Re-Score All Cards"):
 
-        slabs = df[df["psa_is_graded"] == True]
+        for _, row in df.iterrows():
 
-        st.write("Total Slabs:", len(slabs))
-        st.write("Unique Cards:", slabs["card_id"].nunique())
+            if pd.isna(row.get("horizontal_ratio")):
+                continue
 
-        # Progress milestones
-        milestones = [50, 75, 100]
-        for m in milestones:
-            percent = min(len(slabs) / m, 1.0)
-            st.write(f"Progress toward {m} slabs:")
-            st.progress(percent)
-
-    # ------------------------------------------------------------
-    # Grade Tier Distribution
-    # ------------------------------------------------------------
-
-    if "psa_actual_grade" in df.columns:
-
-        st.subheader("PSA Grade Distribution (Slabs Only)")
-
-        slab_grades = df[df["psa_is_graded"] == True]["psa_actual_grade"]
-
-        if len(slab_grades) > 0:
-            st.bar_chart(slab_grades.value_counts().sort_index())
-
-    # ------------------------------------------------------------
-    # Error by Grade Tier
-    # ------------------------------------------------------------
-
-    if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
-
-        df_valid = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
-
-        if len(df_valid) > 0:
-
-            df_valid["error"] = (
-                df_valid["calibrated_grade"]
-                - df_valid["psa_actual_grade"]
+            new_grade = compute_linear_grade(
+                row["horizontal_ratio"],
+                row["vertical_ratio"],
+                row["edge_score"],
+                row["corner_score"]
             )
 
-            st.subheader("Mean Error by Grade Tier")
-            tier_error = df_valid.groupby("psa_actual_grade")["error"].mean()
-            st.bar_chart(tier_error)
+            new_data = {
+                "card_id": row["card_id"],
+                "model_version": MODEL_VERSION,
+                "manufacturer": row.get("manufacturer"),
+                "stock_type": row.get("stock_type"),
+                "psa_is_graded": row.get("psa_is_graded"),
+                "psa_actual_grade": row.get("psa_actual_grade"),
+                "horizontal_ratio": row["horizontal_ratio"],
+                "vertical_ratio": row["vertical_ratio"],
+                "edge_score": row["edge_score"],
+                "corner_score": row["corner_score"],
+                "calibrated_grade": new_grade,
+                "submitted_by": user_email,
+                "created_at": str(datetime.now())
+            }
 
-    # ------------------------------------------------------------
-    # Feature Stability Monitor
-    # ------------------------------------------------------------
+            requests.post(TABLE_URL, json=new_data, headers=headers)
 
-    if all(col in df.columns for col in [
-        "horizontal_ratio",
-        "vertical_ratio",
-        "corner_score",
-        "edge_score"
-    ]):
-
-        st.subheader("Feature Averages (All Data)")
-
-        df["centering_raw"] = (
-            df["horizontal_ratio"] + df["vertical_ratio"]
-        ) / 2
-
-        st.write("Average Centering:", round(df["centering_raw"].mean(), 3))
-        st.write("Average Corner Score:", round(df["corner_score"].mean(), 3))
-        st.write("Average Edge Score:", round(df["edge_score"].mean(), 3))
-        # ----------------------------------------------------
-        # RE-SCORE BUTTON
-        # ----------------------------------------------------
-
-        st.markdown("---")
-        st.subheader("Model Maintenance")
-
-        if st.button("Re-Score All Cards With Locked Linear Model"):
-
-            for _, row in df.iterrows():
-
-                if pd.isna(row.get("horizontal_ratio")):
-                    continue
-
-                new_grade = compute_linear_grade(
-                    row["horizontal_ratio"],
-                    row["vertical_ratio"],
-                    row["edge_score"],
-                    row["corner_score"]
-                )
-
-                new_data = {
-                    "card_id": row["card_id"],
-                    "model_version": MODEL_VERSION,
-                    "manufacturer": row.get("manufacturer"),
-                    "stock_type": row.get("stock_type"),
-                    "psa_is_graded": row.get("psa_is_graded"),
-                    "psa_actual_grade": row.get("psa_actual_grade"),
-                    "horizontal_ratio": row["horizontal_ratio"],
-                    "vertical_ratio": row["vertical_ratio"],
-                    "edge_score": row["edge_score"],
-                    "corner_score": row["corner_score"],
-                    "calibrated_grade": new_grade,
-                    "submitted_by": user_email,
-                    "created_at": str(datetime.now())
-                }
-
-                requests.post(TABLE_URL, json=new_data, headers=headers)
-
-            st.success("Re-scored under locked linear model.")
+        st.success("Re-scored under locked model."))
