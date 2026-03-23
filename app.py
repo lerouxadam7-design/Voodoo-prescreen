@@ -347,4 +347,4 @@ if user_role == "admin":
 
             requests.post(TABLE_URL, json=new_data, headers=headers)
 
-        st.success("Re-scored under locked model."))
+        st.success("Re-scored under locked model.")
