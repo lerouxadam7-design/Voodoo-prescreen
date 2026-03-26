@@ -33,11 +33,11 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3-raw-corner-boost"
+MODEL_VERSION = "v3-linear-surface-guard"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-API_BASE = "https://voodoo-centering-api.onrender.com"  # replace with your real URL
+API_BASE = "https://YOUR-RENDER-API.onrender.com"  # replace with your real URL
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
@@ -122,17 +122,16 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_raw = (h + v) / 2
     centering_fixed = 1 - centering_raw
 
-    # stronger corner influence for raw cards
     grade = (
-        6.49
-        + 4.37 * centering_fixed
-        - 0.17 * edge
-        + 8.0 * corner
+        6.49 +
+        4.37 * centering_fixed -
+        0.17 * edge +
+        4.92 * corner
     )
 
-    # hard floor cap for very weak corners
-    if corner < 0.05:
-        grade = min(grade, 7.5)
+    # surface-failure guard for "false clean" cards
+    if edge < 0.002 and corner > 0.06:
+        grade = min(grade, 8.0)
 
     return round(max(1, min(10, grade)), 2)
 
@@ -141,6 +140,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
 # ============================================================
 
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
+
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
     elif grade >= 8.5:
@@ -151,6 +151,7 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
         st.error("DO NOT SUBMIT")
 
     confidence = float(np.clip(1 - abs(h - v), 0, 1))
+
     if confidence > 0.85:
         risk = "Low"
     elif confidence > 0.65:
@@ -249,7 +250,6 @@ if st.button("Run Analysis"):
         corner = 0.5
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
-        # PSA logic: weakest corner dominates
         corner = min(scores)
 
     # ---------- GRADE ----------
