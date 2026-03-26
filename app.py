@@ -33,11 +33,11 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3-linear-surface-guard"
+MODEL_VERSION = "v3-raw-final"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-API_BASE = "https://voodoo-centering-api.onrender.com"  # replace with your real URL
+API_BASE = "https://voodoo-centering-api.onrender.com"
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
@@ -129,9 +129,14 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         4.92 * corner
     )
 
-    # surface-failure guard for "false clean" cards
-    if edge < 0.002 and corner > 0.06:
+    # stronger raw-card penalty logic
+    if corner < 0.03:
+        grade = min(grade, 7.5)
+    elif corner < 0.07:
         grade = min(grade, 8.0)
+
+    if edge < 0.002 and corner > 0.05:
+        grade = min(grade, 8.2)
 
     return round(max(1, min(10, grade)), 2)
 
@@ -140,7 +145,6 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
 # ============================================================
 
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
-
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
     elif grade >= 8.5:
