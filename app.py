@@ -37,7 +37,7 @@ MODEL_VERSION = "v3-linear-surface-guard"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
-API_BASE = "https://YOUR-RENDER-API.onrender.com"  # replace with your real URL
+API_BASE = "https://voodoo-centering-api.onrender.com"  # replace with your real URL
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 
