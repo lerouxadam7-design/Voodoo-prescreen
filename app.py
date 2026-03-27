@@ -33,7 +33,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3-raw-final"
+MODEL_VERSION = "v3-raw-locked"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -129,7 +129,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         4.92 * corner
     )
 
-    # stronger raw-card penalty logic
+    # raw-card penalty logic
     if corner < 0.03:
         grade = min(grade, 7.5)
     elif corner < 0.07:
@@ -137,6 +137,10 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
 
     if edge < 0.002 and corner > 0.05:
         grade = min(grade, 8.2)
+
+    # final low-end tightening
+    if corner < 0.04:
+        grade = min(grade, 7.0)
 
     return round(max(1, min(10, grade)), 2)
 
@@ -254,6 +258,7 @@ if st.button("Run Analysis"):
         corner = 0.5
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
+        # PSA logic: weakest corner dominates
         corner = min(scores)
 
     # ---------- GRADE ----------
