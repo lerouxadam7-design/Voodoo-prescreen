@@ -16,14 +16,18 @@ st.markdown("""
 .stApp {
     background: linear-gradient(90deg,#3F1D6A,#522C87,#5F3A96);
 }
-h1, h2, h3 { color: #C9A44D !important; }
+h1, h2, h3 {
+    color: #C9A44D !important;
+}
 .stButton>button {
     background-color: #C9A44D !important;
     color: black !important;
     border-radius: 10px !important;
     font-weight: bold !important;
 }
-label { color: white !important; }
+label {
+    color: white !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -33,7 +37,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v3-raw-locked"
+MODEL_VERSION = "v4-front-manual-centering"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -113,6 +117,43 @@ corner1 = st.file_uploader("Corner 1 (Required)", ["jpg", "jpeg", "png"], key="c
 corner2 = st.file_uploader("Corner 2 (Required)", ["jpg", "jpeg", "png"], key="corner2")
 corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg", "jpeg", "png"], key="corner3")
 corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg", "jpeg", "png"], key="corner4")
+
+# ============================================================
+# MANUAL CENTERING ASSIST (FRONT ONLY)
+# ============================================================
+
+st.markdown("## Manual Centering Assist")
+use_manual_centering = st.checkbox("Use manual centering (front only)")
+
+st.caption(
+    "Enter front border thicknesses using any consistent unit "
+    "(pixels, mm, or ruler marks)."
+)
+
+front_left = 0.0
+front_right = 0.0
+front_top = 0.0
+front_bottom = 0.0
+
+def safe_ratio(a: float, b: float) -> float:
+    a = float(a)
+    b = float(b)
+    if a <= 0 or b <= 0:
+        return 0.5
+    return float(min(a, b) / max(a, b))
+
+if use_manual_centering:
+    st.markdown("### Front Measurements")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        front_left = st.number_input("Left Border", min_value=0.0, step=0.1, format="%.2f")
+        front_top = st.number_input("Top Border", min_value=0.0, step=0.1, format="%.2f")
+
+    with col2:
+        front_right = st.number_input("Right Border", min_value=0.0, step=0.1, format="%.2f")
+        front_bottom = st.number_input("Bottom Border", min_value=0.0, step=0.1, format="%.2f")
 
 # ============================================================
 # MODEL
@@ -218,6 +259,25 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
+    # ---------- MANUAL CENTERING OVERRIDE ----------
+    front_h = None
+    front_v = None
+
+    if use_manual_centering:
+        if not all(x > 0 for x in [front_left, front_right, front_top, front_bottom]):
+            st.error("All front measurements must be entered when manual centering is enabled.")
+            st.stop()
+
+        front_h = safe_ratio(front_left, front_right)
+        front_v = safe_ratio(front_top, front_bottom)
+
+        h = front_h
+        v = front_v
+
+        st.info("Manual front centering applied")
+        st.write("Horizontal Ratio Used:", round(h, 4))
+        st.write("Vertical Ratio Used:", round(v, 4))
+
     # ---------- CORNER API ----------
     corner_files = [corner1, corner2]
     if corner3 is not None:
@@ -322,7 +382,14 @@ if st.button("Run Analysis"):
         "front_image_url": front_url,
         "back_image_url": back_url,
         "submitted_by": user_email,
-        "created_at": str(datetime.now())
+        "created_at": str(datetime.now()),
+        "manual_centering_used": use_manual_centering,
+        "front_left_measurement": front_left if use_manual_centering else None,
+        "front_right_measurement": front_right if use_manual_centering else None,
+        "front_top_measurement": front_top if use_manual_centering else None,
+        "front_bottom_measurement": front_bottom if use_manual_centering else None,
+        "front_horizontal_ratio_manual": front_h if use_manual_centering else None,
+        "front_vertical_ratio_manual": front_v if use_manual_centering else None,
     }
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
