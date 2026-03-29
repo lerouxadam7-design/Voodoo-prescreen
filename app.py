@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 # ============================================================
@@ -197,7 +198,13 @@ def pil_to_base64(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
+def render_overlay_image(
+    img: Image.Image,
+    left_x: float,
+    right_x: float,
+    top_y: float,
+    bottom_y: float
+) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
 
@@ -206,52 +213,67 @@ def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y:
         position: relative;
         width: {width}px;
         height: {height}px;
-        margin: 0 0 10px 0;
-        background-image: url('data:image/png;base64,{img_b64}');
-        background-size: contain;
-        background-repeat: no-repeat;
-        background-position: top left;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
         border: 1px solid #666;
     ">
+        <img
+            src="data:image/png;base64,{img_b64}"
+            style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: {width}px;
+                height: {height}px;
+                object-fit: contain;
+                z-index: 1;
+            "
+        />
+
         <div style="
             position: absolute;
-            top: 0px;
+            top: 0;
             left: {left_x}px;
             width: 3px;
             height: {height}px;
             background: #00FF00;
+            z-index: 2;
         "></div>
 
         <div style="
             position: absolute;
-            top: 0px;
+            top: 0;
             left: {right_x}px;
             width: 3px;
             height: {height}px;
             background: #00FF00;
+            z-index: 2;
         "></div>
 
         <div style="
             position: absolute;
             top: {top_y}px;
-            left: 0px;
+            left: 0;
             width: {width}px;
             height: 3px;
             background: #00FF00;
+            z-index: 2;
         "></div>
 
         <div style="
             position: absolute;
             top: {bottom_y}px;
-            left: 0px;
+            left: 0;
             width: {width}px;
             height: 3px;
             background: #00FF00;
+            z-index: 2;
         "></div>
     </div>
     """
 
-    st.markdown(html, unsafe_allow_html=True)
+    components.html(html, height=height + 10, width=width + 10, scrolling=False)
 
 # ============================================================
 # INTERACTIVE MANUAL CENTERING ASSIST
