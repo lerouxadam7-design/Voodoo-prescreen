@@ -1,3 +1,5 @@
+import base64
+import io
 import uuid
 from datetime import datetime
 
@@ -6,7 +8,6 @@ import pandas as pd
 import requests
 import streamlit as st
 from PIL import Image
-from streamlit_drawable_canvas import st_canvas
 
 # ============================================================
 # DESIGN THEME
@@ -31,6 +32,10 @@ h1, h2, h3 {
 label {
     color: white !important;
 }
+.small-note {
+    color: #dddddd;
+    font-size: 0.9rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -40,7 +45,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v5-overlay-manual-centering"
+MODEL_VERSION = "v5-front-manual-centering-functional"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -183,110 +188,25 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Corner Impact:", round(1 - corner, 3))
     st.write("Edge Impact:", round(1 - edge, 3))
 
-def parse_manual_lines(canvas_json, width: int, height: int):
-    if not canvas_json or "objects" not in canvas_json:
-        return None
+def pil_to_base64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
-    objects = canvas_json["objects"]
-    lines = [obj for obj in objects if obj.get("type") == "line"]
+def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
+    img_b64 = pil_to_base64(img)
+    width, height = img.size
 
-    if len(lines) < 4:
-        return None
-
-    verticals = []
-    horizontals = []
-
-    for line in lines:
-        x1 = line["x1"] + line["left"]
-        y1 = line["y1"] + line["top"]
-        x2 = line["x2"] + line["left"]
-        y2 = line["y2"] + line["top"]
-
-        dx = abs(x2 - x1)
-        dy = abs(y2 - y1)
-
-        if dy > dx:
-            verticals.append((x1 + x2) / 2)
-        else:
-            horizontals.append((y1 + y2) / 2)
-
-    if len(verticals) < 2 or len(horizontals) < 2:
-        return None
-
-    left_x = max(0, min(width, min(verticals)))
-    right_x = max(0, min(width, max(verticals)))
-    top_y = max(0, min(height, min(horizontals)))
-    bottom_y = max(0, min(height, max(horizontals)))
-
-    return left_x, right_x, top_y, bottom_y
-
-def build_initial_lines(width: int, height: int):
-    left_x = width * 0.08
-    right_x = width * 0.92
-    top_y = height * 0.08
-    bottom_y = height * 0.92
-
-    return {
-        "version": "4.4.0",
-        "objects": [
-            {
-                "type": "line",
-                "version": "4.4.0",
-                "originX": "left",
-                "originY": "top",
-                "left": left_x,
-                "top": 0,
-                "x1": 0,
-                "y1": 0,
-                "x2": 0,
-                "y2": height,
-                "stroke": "#00FF00",
-                "strokeWidth": 3
-            },
-            {
-                "type": "line",
-                "version": "4.4.0",
-                "originX": "left",
-                "originY": "top",
-                "left": right_x,
-                "top": 0,
-                "x1": 0,
-                "y1": 0,
-                "x2": 0,
-                "y2": height,
-                "stroke": "#00FF00",
-                "strokeWidth": 3
-            },
-            {
-                "type": "line",
-                "version": "4.4.0",
-                "originX": "left",
-                "originY": "top",
-                "left": 0,
-                "top": top_y,
-                "x1": 0,
-                "y1": 0,
-                "x2": width,
-                "y2": 0,
-                "stroke": "#00FF00",
-                "strokeWidth": 3
-            },
-            {
-                "type": "line",
-                "version": "4.4.0",
-                "originX": "left",
-                "originY": "top",
-                "left": 0,
-                "top": bottom_y,
-                "x1": 0,
-                "y1": 0,
-                "x2": width,
-                "y2": 0,
-                "stroke": "#00FF00",
-                "strokeWidth": 3
-            }
-        ]
-    }
+    html = f"""
+    <div style="position:relative; width:{width}px; height:{height}px; margin-bottom: 10px;">
+      <img src="data:image/png;base64,{img_b64}" style="position:absolute; top:0; left:0; width:{width}px; height:{height}px;" />
+      <div style="position:absolute; top:0; left:{left_x}px; width:3px; height:{height}px; background:#00FF00;"></div>
+      <div style="position:absolute; top:0; left:{right_x}px; width:3px; height:{height}px; background:#00FF00;"></div>
+      <div style="position:absolute; top:{top_y}px; left:0; width:{width}px; height:3px; background:#00FF00;"></div>
+      <div style="position:absolute; top:{bottom_y}px; left:0; width:{width}px; height:3px; background:#00FF00;"></div>
+    </div>
+    """
+    st.components.v1.html(html, height=height + 10, width=width)
 
 # ============================================================
 # INTERACTIVE MANUAL CENTERING ASSIST
@@ -302,38 +222,41 @@ if use_manual_centering:
     if full_card_front is None:
         st.info("Upload a front image to use interactive centering assist.")
     else:
-        front_image = Image.open(full_card_front).convert("RGB")
+        try:
+            front_image = Image.open(full_card_front).convert("RGB")
+        except Exception as e:
+            st.error(f"Could not open front image: {e}")
+            st.stop()
 
         max_display_width = 900
         scale = min(1.0, max_display_width / front_image.width)
         display_width = int(front_image.width * scale)
         display_height = int(front_image.height * scale)
-
         display_image = front_image.resize((display_width, display_height))
 
-        st.caption(
-            "Drag the 4 green lines directly on the image so they align with "
-            "the true measurable borders on the front of the card."
+        st.markdown(
+            '<div class="small-note">Move the sliders to position the 4 guide lines on the actual measurable front borders.</div>',
+            unsafe_allow_html=True
         )
 
-        canvas_result = st_canvas(
-            fill_color="rgba(0, 0, 0, 0)",
-            stroke_width=3,
-            stroke_color="#00FF00",
-            background_image=display_image,
-            update_streamlit=True,
-            height=display_height,
-            width=display_width,
-            drawing_mode="transform",
-            initial_drawing=build_initial_lines(display_width, display_height),
-            display_toolbar=True,
-            key="manual_centering_canvas_overlay",
-        )
+        col_a, col_b = st.columns([1, 1])
 
-        parsed = parse_manual_lines(canvas_result.json_data, display_width, display_height)
+        with col_a:
+            left_percent = st.slider("Left Line", 0, 100, 8)
+            right_percent = st.slider("Right Line", 0, 100, 92)
+            top_percent = st.slider("Top Line", 0, 100, 8)
+            bottom_percent = st.slider("Bottom Line", 0, 100, 92)
 
-        if parsed is not None:
-            left_x, right_x, top_y, bottom_y = parsed
+        left_x = (left_percent / 100.0) * display_width
+        right_x = (right_percent / 100.0) * display_width
+        top_y = (top_percent / 100.0) * display_height
+        bottom_y = (bottom_percent / 100.0) * display_height
+
+        if right_x <= left_x or bottom_y <= top_y:
+            st.error("Right line must be to the right of left line, and bottom line must be below top line.")
+        else:
+            with col_b:
+                render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
 
             manual_left = left_x
             manual_right = display_width - right_x
@@ -349,8 +272,6 @@ if use_manual_centering:
             st.write("Manual Bottom Border:", round(manual_bottom, 2))
             st.write("Manual Horizontal Ratio:", round(manual_h_ratio, 4))
             st.write("Manual Vertical Ratio:", round(manual_v_ratio, 4))
-        else:
-            st.warning("Move the four guide lines so two are vertical and two are horizontal.")
 
 # ============================================================
 # RUN ANALYSIS
