@@ -40,7 +40,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v5-interactive-front-centering-safe"
+MODEL_VERSION = "v5-overlay-manual-centering"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -302,7 +302,11 @@ if use_manual_centering:
     if full_card_front is None:
         st.info("Upload a front image to use interactive centering assist.")
     else:
-        front_image = Image.open(full_card_front).convert("RGB")
+        try:
+            front_image = Image.open(full_card_front).convert("RGB")
+        except Exception as e:
+            st.error(f"Could not open front image: {e}")
+            st.stop()
 
         max_display_width = 900
         scale = min(1.0, max_display_width / front_image.width)
@@ -312,25 +316,23 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.caption(
-            "Drag the 4 green lines so they align with the true measurable borders "
-            "on the front of the card. The photo is shown below, and the lines are moved "
-            "on the blank canvas directly underneath it."
+            "Drag the 4 green lines directly on top of the image so they align with "
+            "the true measurable front borders."
         )
-
-        st.image(display_image, caption="Front Image Reference", use_container_width=False)
 
         canvas_result = st_canvas(
             fill_color="rgba(0, 0, 0, 0)",
             stroke_width=3,
             stroke_color="#00FF00",
-            background_color="rgba(255,255,255,0.02)",
+            background_image=display_image,
+            background_color="rgba(0,0,0,0)",
             update_streamlit=True,
             height=display_height,
             width=display_width,
             drawing_mode="transform",
             initial_drawing=build_initial_lines(display_width, display_height),
             display_toolbar=True,
-            key="manual_centering_canvas_safe",
+            key="manual_centering_canvas_overlay",
         )
 
         parsed = parse_manual_lines(canvas_result.json_data, display_width, display_height)
