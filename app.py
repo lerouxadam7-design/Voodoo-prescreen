@@ -137,15 +137,16 @@ def safe_ratio(a: float, b: float) -> float:
         return 0.5
     return float(min(a, b) / max(a, b))
 
+
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_raw = (h + v) / 2
     centering_fixed = 1 - centering_raw
 
     grade = (
-        6.49 +
-        4.37 * centering_fixed -
-        0.17 * edge +
-        4.92 * corner
+        6.49
+        + 4.37 * centering_fixed
+        - 0.17 * edge
+        + 4.92 * corner
     )
 
     if corner < 0.03:
@@ -160,6 +161,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         grade = min(grade, 7.0)
 
     return round(max(1, min(10, grade)), 2)
+
 
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
     if grade >= 9.2:
@@ -188,25 +190,68 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Corner Impact:", round(1 - corner, 3))
     st.write("Edge Impact:", round(1 - edge, 3))
 
+
 def pil_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
+
 
 def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
 
     html = f"""
-    <div style="position:relative; width:{width}px; height:{height}px; margin-bottom: 10px;">
-      <img src="data:image/png;base64,{img_b64}" style="position:absolute; top:0; left:0; width:{width}px; height:{height}px;" />
-      <div style="position:absolute; top:0; left:{left_x}px; width:3px; height:{height}px; background:#00FF00;"></div>
-      <div style="position:absolute; top:0; left:{right_x}px; width:3px; height:{height}px; background:#00FF00;"></div>
-      <div style="position:absolute; top:{top_y}px; left:0; width:{width}px; height:3px; background:#00FF00;"></div>
-      <div style="position:absolute; top:{bottom_y}px; left:0; width:{width}px; height:3px; background:#00FF00;"></div>
+    <div style="
+        position: relative;
+        width: {width}px;
+        height: {height}px;
+        margin: 0 0 10px 0;
+        background-image: url('data:image/png;base64,{img_b64}');
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: top left;
+        border: 1px solid #666;
+    ">
+        <div style="
+            position: absolute;
+            top: 0px;
+            left: {left_x}px;
+            width: 3px;
+            height: {height}px;
+            background: #00FF00;
+        "></div>
+
+        <div style="
+            position: absolute;
+            top: 0px;
+            left: {right_x}px;
+            width: 3px;
+            height: {height}px;
+            background: #00FF00;
+        "></div>
+
+        <div style="
+            position: absolute;
+            top: {top_y}px;
+            left: 0px;
+            width: {width}px;
+            height: 3px;
+            background: #00FF00;
+        "></div>
+
+        <div style="
+            position: absolute;
+            top: {bottom_y}px;
+            left: 0px;
+            width: {width}px;
+            height: 3px;
+            background: #00FF00;
+        "></div>
     </div>
     """
-    st.components.v1.html(html, height=height + 10, width=width)
+
+    st.markdown(html, unsafe_allow_html=True)
 
 # ============================================================
 # INTERACTIVE MANUAL CENTERING ASSIST
@@ -235,11 +280,11 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="small-note">Move the sliders to position the 4 guide lines on the actual measurable front borders.</div>',
+            '<div class="small-note">Move the sliders to place the 4 guide lines directly on the measurable front borders.</div>',
             unsafe_allow_html=True
         )
 
-        col_a, col_b = st.columns([1, 1])
+        col_a, col_b = st.columns([1, 2])
 
         with col_a:
             left_percent = st.slider("Left Line", 0, 100, 8)
@@ -252,12 +297,12 @@ if use_manual_centering:
         top_y = (top_percent / 100.0) * display_height
         bottom_y = (bottom_percent / 100.0) * display_height
 
+        with col_b:
+            render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
+
         if right_x <= left_x or bottom_y <= top_y:
             st.error("Right line must be to the right of left line, and bottom line must be below top line.")
         else:
-            with col_b:
-                render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
-
             manual_left = left_x
             manual_right = display_width - right_x
             manual_top = top_y
@@ -291,6 +336,7 @@ if st.button("Run Analysis"):
         st.error("Manual centering assist is enabled, but the guide lines are not set correctly.")
         st.stop()
 
+    # ---------- FULL CARD API ----------
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -319,6 +365,7 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
+    # ---------- MANUAL CENTERING OVERRIDE ----------
     if use_manual_centering:
         h = manual_h_ratio
         v = manual_v_ratio
@@ -326,6 +373,7 @@ if st.button("Run Analysis"):
         st.write("Horizontal Ratio Used:", round(h, 4))
         st.write("Vertical Ratio Used:", round(v, 4))
 
+    # ---------- CORNER API ----------
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -367,12 +415,17 @@ if st.button("Run Analysis"):
     else:
         corner = min(scores)
 
+    # ---------- GRADE ----------
     grade = compute_grade(h, v, edge, corner)
 
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
     decision_panel(grade, h, v, edge, corner)
+
+    # ========================================================
+    # SAVE IMAGES
+    # ========================================================
 
     card_id = str(uuid.uuid4())
 
@@ -403,6 +456,10 @@ if st.button("Run Analysis"):
         f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}"
         if full_card_back else None
     )
+
+    # ========================================================
+    # SAVE DATA
+    # ========================================================
 
     payload = {
         "card_id": card_id,
