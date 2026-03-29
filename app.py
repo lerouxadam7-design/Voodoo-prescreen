@@ -1,15 +1,19 @@
-import streamlit as st
-import requests
+import io
+import uuid
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
-import uuid
+import requests
+import streamlit as st
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 
 # ============================================================
 # DESIGN THEME
 # ============================================================
 
-st.set_page_config(page_title="Voodoo Sports Grading")
+st.set_page_config(page_title="Voodoo Sports Grading", layout="wide")
 
 st.markdown("""
 <style>
@@ -37,7 +41,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v4-front-manual-centering"
+MODEL_VERSION = "v5-interactive-front-centering"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -119,21 +123,8 @@ corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg", "jpeg", "png"], key="c
 corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg", "jpeg", "png"], key="corner4")
 
 # ============================================================
-# MANUAL CENTERING ASSIST (FRONT ONLY)
+# HELPERS
 # ============================================================
-
-st.markdown("## Manual Centering Assist")
-use_manual_centering = st.checkbox("Use manual centering (front only)")
-
-st.caption(
-    "Enter front border thicknesses using any consistent unit "
-    "(pixels, mm, or ruler marks)."
-)
-
-front_left = 0.0
-front_right = 0.0
-front_top = 0.0
-front_bottom = 0.0
 
 def safe_ratio(a: float, b: float) -> float:
     a = float(a)
@@ -141,23 +132,6 @@ def safe_ratio(a: float, b: float) -> float:
     if a <= 0 or b <= 0:
         return 0.5
     return float(min(a, b) / max(a, b))
-
-if use_manual_centering:
-    st.markdown("### Front Measurements")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        front_left = st.number_input("Left Border", min_value=0.0, step=0.1, format="%.2f")
-        front_top = st.number_input("Top Border", min_value=0.0, step=0.1, format="%.2f")
-
-    with col2:
-        front_right = st.number_input("Right Border", min_value=0.0, step=0.1, format="%.2f")
-        front_bottom = st.number_input("Bottom Border", min_value=0.0, step=0.1, format="%.2f")
-
-# ============================================================
-# MODEL
-# ============================================================
 
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_raw = (h + v) / 2
@@ -170,7 +144,6 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         4.92 * corner
     )
 
-    # raw-card penalty logic
     if corner < 0.03:
         grade = min(grade, 7.5)
     elif corner < 0.07:
@@ -179,15 +152,10 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     if edge < 0.002 and corner > 0.05:
         grade = min(grade, 8.2)
 
-    # final low-end tightening
     if corner < 0.04:
         grade = min(grade, 7.0)
 
     return round(max(1, min(10, grade)), 2)
-
-# ============================================================
-# DECISION PANEL
-# ============================================================
 
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
     if grade >= 9.2:
@@ -216,6 +184,191 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Corner Impact:", round(1 - corner, 3))
     st.write("Edge Impact:", round(1 - edge, 3))
 
+def parse_manual_lines(canvas_json, width: int, height: int):
+    """
+    Expect 4 lines:
+    - one near left
+    - one near right
+    - one near top
+    - one near bottom
+
+    Returns:
+    left_x, right_x, top_y, bottom_y
+    """
+    if not canvas_json or "objects" not in canvas_json:
+        return None
+
+    objects = canvas_json["objects"]
+    lines = [obj for obj in objects if obj.get("type") == "line"]
+
+    if len(lines) < 4:
+        return None
+
+    verticals = []
+    horizontals = []
+
+    for line in lines:
+        x1 = line["x1"] + line["left"]
+        y1 = line["y1"] + line["top"]
+        x2 = line["x2"] + line["left"]
+        y2 = line["y2"] + line["top"]
+
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+
+        if dy > dx:
+            verticals.append((x1 + x2) / 2)
+        else:
+            horizontals.append((y1 + y2) / 2)
+
+    if len(verticals) < 2 or len(horizontals) < 2:
+        return None
+
+    left_x = min(verticals)
+    right_x = max(verticals)
+    top_y = min(horizontals)
+    bottom_y = max(horizontals)
+
+    # Clamp into image
+    left_x = max(0, min(width, left_x))
+    right_x = max(0, min(width, right_x))
+    top_y = max(0, min(height, top_y))
+    bottom_y = max(0, min(height, bottom_y))
+
+    return left_x, right_x, top_y, bottom_y
+
+def build_initial_lines(width: int, height: int):
+    # Suggested starting positions near borders
+    left_x = width * 0.08
+    right_x = width * 0.92
+    top_y = height * 0.08
+    bottom_y = height * 0.92
+
+    return {
+        "version": "4.4.0",
+        "objects": [
+            {
+                "type": "line",
+                "version": "4.4.0",
+                "originX": "left",
+                "originY": "top",
+                "left": left_x,
+                "top": 0,
+                "x1": 0,
+                "y1": 0,
+                "x2": 0,
+                "y2": height,
+                "stroke": "#00FF00",
+                "strokeWidth": 3
+            },
+            {
+                "type": "line",
+                "version": "4.4.0",
+                "originX": "left",
+                "originY": "top",
+                "left": right_x,
+                "top": 0,
+                "x1": 0,
+                "y1": 0,
+                "x2": 0,
+                "y2": height,
+                "stroke": "#00FF00",
+                "strokeWidth": 3
+            },
+            {
+                "type": "line",
+                "version": "4.4.0",
+                "originX": "left",
+                "originY": "top",
+                "left": 0,
+                "top": top_y,
+                "x1": 0,
+                "y1": 0,
+                "x2": width,
+                "y2": 0,
+                "stroke": "#00FF00",
+                "strokeWidth": 3
+            },
+            {
+                "type": "line",
+                "version": "4.4.0",
+                "originX": "left",
+                "originY": "top",
+                "left": 0,
+                "top": bottom_y,
+                "x1": 0,
+                "y1": 0,
+                "x2": width,
+                "y2": 0,
+                "stroke": "#00FF00",
+                "strokeWidth": 3
+            }
+        ]
+    }
+
+# ============================================================
+# INTERACTIVE MANUAL CENTERING ASSIST
+# ============================================================
+
+st.markdown("## Manual Centering Assist")
+use_manual_centering = st.checkbox("Use interactive front centering assist")
+
+manual_left = manual_right = manual_top = manual_bottom = None
+manual_h_ratio = manual_v_ratio = None
+
+if use_manual_centering:
+    if full_card_front is None:
+        st.info("Upload a front image to use interactive centering assist.")
+    else:
+        front_image = Image.open(full_card_front).convert("RGB")
+
+        max_display_width = 900
+        scale = min(1.0, max_display_width / front_image.width)
+        display_width = int(front_image.width * scale)
+        display_height = int(front_image.height * scale)
+
+        display_image = front_image.resize((display_width, display_height))
+
+        st.caption(
+            "Drag the 4 green lines so they align with the true measurable borders "
+            "on the front of the card. Use two vertical lines and two horizontal lines."
+        )
+
+        canvas_result = st_canvas(
+            fill_color="rgba(0, 0, 0, 0)",
+            stroke_width=3,
+            stroke_color="#00FF00",
+            background_image=display_image,
+            update_streamlit=True,
+            height=display_height,
+            width=display_width,
+            drawing_mode="transform",
+            initial_drawing=build_initial_lines(display_width, display_height),
+            key="manual_centering_canvas",
+        )
+
+        parsed = parse_manual_lines(canvas_result.json_data, display_width, display_height)
+
+        if parsed is not None:
+            left_x, right_x, top_y, bottom_y = parsed
+
+            manual_left = left_x
+            manual_right = display_width - right_x
+            manual_top = top_y
+            manual_bottom = display_height - bottom_y
+
+            manual_h_ratio = safe_ratio(manual_left, manual_right)
+            manual_v_ratio = safe_ratio(manual_top, manual_bottom)
+
+            st.write("Manual Left Border:", round(manual_left, 2))
+            st.write("Manual Right Border:", round(manual_right, 2))
+            st.write("Manual Top Border:", round(manual_top, 2))
+            st.write("Manual Bottom Border:", round(manual_bottom, 2))
+            st.write("Manual Horizontal Ratio:", round(manual_h_ratio, 4))
+            st.write("Manual Vertical Ratio:", round(manual_v_ratio, 4))
+        else:
+            st.warning("Move the four guide lines so two are vertical and two are horizontal.")
+
 # ============================================================
 # RUN ANALYSIS
 # ============================================================
@@ -228,6 +381,10 @@ if st.button("Run Analysis"):
 
     if corner1 is None or corner2 is None:
         st.error("At least 2 corner images are required")
+        st.stop()
+
+    if use_manual_centering and (manual_h_ratio is None or manual_v_ratio is None):
+        st.error("Manual centering assist is enabled, but the guide lines are not set correctly.")
         st.stop()
 
     # ---------- FULL CARD API ----------
@@ -260,21 +417,11 @@ if st.button("Run Analysis"):
     edge = data["edge_score"]
 
     # ---------- MANUAL CENTERING OVERRIDE ----------
-    front_h = None
-    front_v = None
-
     if use_manual_centering:
-        if not all(x > 0 for x in [front_left, front_right, front_top, front_bottom]):
-            st.error("All front measurements must be entered when manual centering is enabled.")
-            st.stop()
+        h = manual_h_ratio
+        v = manual_v_ratio
 
-        front_h = safe_ratio(front_left, front_right)
-        front_v = safe_ratio(front_top, front_bottom)
-
-        h = front_h
-        v = front_v
-
-        st.info("Manual front centering applied")
+        st.info("Interactive manual front centering applied")
         st.write("Horizontal Ratio Used:", round(h, 4))
         st.write("Vertical Ratio Used:", round(v, 4))
 
@@ -318,7 +465,6 @@ if st.button("Run Analysis"):
         corner = 0.5
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
-        # PSA logic: weakest corner dominates
         corner = min(scores)
 
     # ---------- GRADE ----------
@@ -384,12 +530,12 @@ if st.button("Run Analysis"):
         "submitted_by": user_email,
         "created_at": str(datetime.now()),
         "manual_centering_used": use_manual_centering,
-        "front_left_measurement": front_left if use_manual_centering else None,
-        "front_right_measurement": front_right if use_manual_centering else None,
-        "front_top_measurement": front_top if use_manual_centering else None,
-        "front_bottom_measurement": front_bottom if use_manual_centering else None,
-        "front_horizontal_ratio_manual": front_h if use_manual_centering else None,
-        "front_vertical_ratio_manual": front_v if use_manual_centering else None,
+        "front_left_measurement": manual_left if use_manual_centering else None,
+        "front_right_measurement": manual_right if use_manual_centering else None,
+        "front_top_measurement": manual_top if use_manual_centering else None,
+        "front_bottom_measurement": manual_bottom if use_manual_centering else None,
+        "front_horizontal_ratio_manual": manual_h_ratio if use_manual_centering else None,
+        "front_vertical_ratio_manual": manual_v_ratio if use_manual_centering else None,
     }
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
