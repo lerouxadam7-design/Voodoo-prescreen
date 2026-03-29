@@ -1,8 +1,7 @@
 streamlit==1.40.0
-numpy
-requests
-pandas
-opencv-python-headless
-scikit-learn
 streamlit-drawable-canvas==0.9.3
 Pillow
+numpy
+pandas
+requests
+opencv-python-headless
