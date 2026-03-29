@@ -1,4 +1,3 @@
-import io
 import uuid
 from datetime import datetime
 
@@ -41,7 +40,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v5-interactive-front-centering"
+MODEL_VERSION = "v5-interactive-front-centering-safe"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -185,16 +184,6 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Edge Impact:", round(1 - edge, 3))
 
 def parse_manual_lines(canvas_json, width: int, height: int):
-    """
-    Expect 4 lines:
-    - one near left
-    - one near right
-    - one near top
-    - one near bottom
-
-    Returns:
-    left_x, right_x, top_y, bottom_y
-    """
     if not canvas_json or "objects" not in canvas_json:
         return None
 
@@ -224,21 +213,14 @@ def parse_manual_lines(canvas_json, width: int, height: int):
     if len(verticals) < 2 or len(horizontals) < 2:
         return None
 
-    left_x = min(verticals)
-    right_x = max(verticals)
-    top_y = min(horizontals)
-    bottom_y = max(horizontals)
-
-    # Clamp into image
-    left_x = max(0, min(width, left_x))
-    right_x = max(0, min(width, right_x))
-    top_y = max(0, min(height, top_y))
-    bottom_y = max(0, min(height, bottom_y))
+    left_x = max(0, min(width, min(verticals)))
+    right_x = max(0, min(width, max(verticals)))
+    top_y = max(0, min(height, min(horizontals)))
+    bottom_y = max(0, min(height, max(horizontals)))
 
     return left_x, right_x, top_y, bottom_y
 
 def build_initial_lines(width: int, height: int):
-    # Suggested starting positions near borders
     left_x = width * 0.08
     right_x = width * 0.92
     top_y = height * 0.08
@@ -331,20 +313,24 @@ if use_manual_centering:
 
         st.caption(
             "Drag the 4 green lines so they align with the true measurable borders "
-            "on the front of the card. Use two vertical lines and two horizontal lines."
+            "on the front of the card. The photo is shown below, and the lines are moved "
+            "on the blank canvas directly underneath it."
         )
+
+        st.image(display_image, caption="Front Image Reference", use_container_width=False)
 
         canvas_result = st_canvas(
             fill_color="rgba(0, 0, 0, 0)",
             stroke_width=3,
             stroke_color="#00FF00",
-            background_image=display_image,
+            background_color="rgba(255,255,255,0.02)",
             update_streamlit=True,
             height=display_height,
             width=display_width,
             drawing_mode="transform",
             initial_drawing=build_initial_lines(display_width, display_height),
-            key="manual_centering_canvas",
+            display_toolbar=True,
+            key="manual_centering_canvas_safe",
         )
 
         parsed = parse_manual_lines(canvas_result.json_data, display_width, display_height)
