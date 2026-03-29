@@ -302,11 +302,7 @@ if use_manual_centering:
     if full_card_front is None:
         st.info("Upload a front image to use interactive centering assist.")
     else:
-        try:
-            front_image = Image.open(full_card_front).convert("RGB")
-        except Exception as e:
-            st.error(f"Could not open front image: {e}")
-            st.stop()
+        front_image = Image.open(full_card_front).convert("RGB")
 
         max_display_width = 900
         scale = min(1.0, max_display_width / front_image.width)
@@ -316,8 +312,8 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.caption(
-            "Drag the 4 green lines directly on top of the image so they align with "
-            "the true measurable front borders."
+            "Drag the 4 green lines directly on the image so they align with "
+            "the true measurable borders on the front of the card."
         )
 
         canvas_result = st_canvas(
@@ -325,7 +321,6 @@ if use_manual_centering:
             stroke_width=3,
             stroke_color="#00FF00",
             background_image=display_image,
-            background_color="rgba(0,0,0,0)",
             update_streamlit=True,
             height=display_height,
             width=display_width,
@@ -375,7 +370,6 @@ if st.button("Run Analysis"):
         st.error("Manual centering assist is enabled, but the guide lines are not set correctly.")
         st.stop()
 
-    # ---------- FULL CARD API ----------
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -404,16 +398,13 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
-    # ---------- MANUAL CENTERING OVERRIDE ----------
     if use_manual_centering:
         h = manual_h_ratio
         v = manual_v_ratio
-
         st.info("Interactive manual front centering applied")
         st.write("Horizontal Ratio Used:", round(h, 4))
         st.write("Vertical Ratio Used:", round(v, 4))
 
-    # ---------- CORNER API ----------
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -455,17 +446,12 @@ if st.button("Run Analysis"):
     else:
         corner = min(scores)
 
-    # ---------- GRADE ----------
     grade = compute_grade(h, v, edge, corner)
 
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
     decision_panel(grade, h, v, edge, corner)
-
-    # ========================================================
-    # SAVE IMAGES
-    # ========================================================
 
     card_id = str(uuid.uuid4())
 
@@ -496,10 +482,6 @@ if st.button("Run Analysis"):
         f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}"
         if full_card_back else None
     )
-
-    # ========================================================
-    # SAVE DATA
-    # ========================================================
 
     payload = {
         "card_id": card_id,
