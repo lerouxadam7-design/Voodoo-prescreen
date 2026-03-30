@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6-corner-remap"
+MODEL_VERSION = "v6.1-corner-calibration-test"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -220,12 +220,12 @@ def centering_psa_grade(h: float, v: float) -> float:
 
 def remap_corner_for_model(corner: float) -> float:
     c = max(0.0, min(1.0, float(corner)))
-    return float(np.clip(np.sqrt(c), 0, 1))
+    return float(np.clip(np.sqrt(c) * 1.1, 0, 1))
 
 
 def corner_subgrade(corner: float) -> float:
     c_adj = remap_corner_for_model(corner)
-    score = 6.0 + (c_adj * 4.0)
+    score = 7.0 + (c_adj * 3.0)
     return round(max(1, min(10, score)), 2)
 
 
@@ -243,7 +243,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
 
     grade = (
         6.49
-        + 4.37 * centering_fixed
+        + 3.80 * centering_fixed
         - 0.17 * edge
         + 4.92 * corner_adj
     )
