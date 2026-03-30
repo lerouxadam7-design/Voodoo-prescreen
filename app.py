@@ -46,7 +46,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v5-front-manual-centering-functional"
+MODEL_VERSION = "v5-front-manual-centering-psa-display"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -139,6 +139,33 @@ def safe_ratio(a: float, b: float) -> float:
     return float(min(a, b) / max(a, b))
 
 
+def ratio_to_psa_centering(ratio: float) -> str:
+    ratio = max(0.01, min(1.0, float(ratio)))
+    major = 100 / (1 + ratio)
+    minor = 100 - major
+    major = round(major)
+    minor = round(minor)
+    low = min(major, minor)
+    high = max(major, minor)
+    return f"{low}/{high}"
+
+
+def centering_subgrade(h: float, v: float) -> float:
+    centering_raw = (h + v) / 2
+    score = 10 - ((1 - centering_raw) * 10)
+    return round(max(1, min(10, score)), 2)
+
+
+def corner_subgrade(corner: float) -> float:
+    score = 1 + (corner * 9)
+    return round(max(1, min(10, score)), 2)
+
+
+def edge_subgrade(edge: float) -> float:
+    score = 10 - (edge * 10)
+    return round(max(1, min(10, score)), 2)
+
+
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_raw = (h + v) / 2
     centering_fixed = 1 - centering_raw
@@ -164,22 +191,6 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     return round(max(1, min(10, grade)), 2)
 
 
-def centering_subgrade(h: float, v: float) -> float:
-    centering_raw = (h + v) / 2
-    score = 10 - ((1 - centering_raw) * 10)
-    return round(max(1, min(10, score)), 2)
-
-
-def corner_subgrade(corner: float) -> float:
-    score = 1 + (corner * 9)
-    return round(max(1, min(10, score)), 2)
-
-
-def edge_subgrade(edge: float) -> float:
-    score = 10 - (edge * 10)
-    return round(max(1, min(10, score)), 2)
-
-
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
@@ -202,8 +213,15 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Confidence:", round(confidence, 2))
     st.write("Risk Level:", risk)
 
+    horizontal_psa = ratio_to_psa_centering(h)
+    vertical_psa = ratio_to_psa_centering(v)
+
+    st.markdown("### Centering")
+    st.write("Horizontal Centering:", horizontal_psa)
+    st.write("Vertical Centering:", vertical_psa)
+    st.write("Centering Grade:", centering_subgrade(h, v))
+
     st.markdown("### Subgrades (Out of 10)")
-    st.write("Centering:", centering_subgrade(h, v))
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
 
@@ -351,6 +369,9 @@ if use_manual_centering:
 
             st.write("Manual Horizontal Ratio:", round(manual_h_ratio, 4))
             st.write("Manual Vertical Ratio:", round(manual_v_ratio, 4))
+            st.write("Manual Horizontal Centering:", ratio_to_psa_centering(manual_h_ratio))
+            st.write("Manual Vertical Centering:", ratio_to_psa_centering(manual_v_ratio))
+            st.write("Manual Centering Grade:", centering_subgrade(manual_h_ratio, manual_v_ratio))
 
 # ============================================================
 # RUN ANALYSIS
@@ -450,6 +471,8 @@ if st.button("Run Analysis"):
     st.markdown("### Raw Feature Values")
     st.write("Horizontal Ratio:", round(h, 4))
     st.write("Vertical Ratio:", round(v, 4))
+    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+    st.write("Vertical Centering:", ratio_to_psa_centering(v))
     st.write("Corner Score:", round(corner, 4))
     st.write("Edge Score:", round(edge, 4))
 
