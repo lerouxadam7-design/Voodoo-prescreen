@@ -19,49 +19,53 @@ st.set_page_config(page_title="Voodoo Sports Grading", layout="wide")
 st.markdown("""
 <style>
 
-/* Main app background */
+/* Background */
 .stApp {
-    background: linear-gradient(90deg,#3F1D6A,#522C87,#5F3A96);
+    background: linear-gradient(90deg, #3F1D6A, #522C87, #5F3A96);
 }
 
-/* ALL TEXT */
+/* Default text white */
 html, body, [class*="css"] {
     color: white !important;
 }
 
-/* Headings */
+/* Headings gold */
 h1, h2, h3, h4, h5, h6 {
     color: #C9A44D !important;
 }
 
-/* Labels */
-label {
+/* Labels / markdown / captions white */
+label, p, span, div, .stMarkdown {
     color: white !important;
 }
 
-/* Paragraphs, spans, divs */
-p, span, div {
-    color: white !important;
-}
-
-/* Markdown text */
-.stMarkdown {
-    color: white !important;
-}
-
-/* Info / captions */
 .small-note {
     color: #dddddd !important;
     font-size: 0.9rem;
 }
 
-/* Inputs */
+/* Keep typeable text black */
 input, textarea {
-    color: white !important;
+    color: black !important;
+    -webkit-text-fill-color: black !important;
+    background-color: white !important;
 }
 
-/* Selectbox text */
-div[data-baseweb="select"] {
+input::placeholder, textarea::placeholder {
+    color: #444 !important;
+    -webkit-text-fill-color: #444 !important;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    color: black !important;
+    -webkit-text-fill-color: black !important;
+    background-color: white !important;
+}
+
+/* Selectbox text black */
+div[data-baseweb="select"] * {
     color: black !important;
 }
 
@@ -74,23 +78,14 @@ div[data-baseweb="select"] {
 }
 
 /* Tables */
-thead tr th {
-    color: white !important;
-}
+thead tr th,
 tbody tr td {
     color: white !important;
 }
 
 /* Metrics */
-[data-testid="stMetricValue"] {
-    color: white !important;
-}
+[data-testid="stMetricValue"],
 [data-testid="stMetricLabel"] {
-    color: white !important;
-}
-
-/* Sliders */
-[data-testid="stSlider"] {
     color: white !important;
 }
 
@@ -103,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v5-front-manual-centering-psa-display"
+MODEL_VERSION = "v6-centering-adjusted-corner-remap"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -207,23 +202,48 @@ def ratio_to_psa_centering(ratio: float) -> str:
     return f"{low}/{high}"
 
 
-def centering_subgrade(h: float, v: float) -> float:
-    centering_raw = (h + v) / 2
-    score = 10 - ((1 - centering_raw) * 10)
-    return round(max(1, min(10, score)), 2)
+def centering_psa_grade(h: float, v: float) -> float:
+    """
+    Display-only centering grade.
+    47/53 and 46/54 should read as PSA 9 worthy.
+    Uses the weaker of horizontal/vertical.
+    """
+    worst = min(float(h), float(v))
+
+    if worst >= 0.90:
+        return 10.0
+    if worst >= 0.84:
+        return 9.5
+    if worst >= 0.80:
+        return 9.0
+    if worst >= 0.72:
+        return 8.0
+    if worst >= 0.64:
+        return 7.0
+    return 6.0
 
 
 def corner_subgrade(corner: float) -> float:
-    score = 1 + (corner * 9)
+    """
+    Display-only remap.
+    Prevents corner score from visually reading as a PSA 1 all the time.
+    """
+    c = max(0.0, min(1.0, float(corner)))
+    score = 6.0 + (np.sqrt(c) * 4.0)
     return round(max(1, min(10, score)), 2)
 
 
 def edge_subgrade(edge: float) -> float:
-    score = 10 - (edge * 10)
+    e = max(0.0, min(1.0, float(edge)))
+    score = 10.0 - (e * 10.0)
     return round(max(1, min(10, score)), 2)
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
+    """
+    Actual model score.
+    Keep stable unless recalibrating from data.
+    """
     centering_raw = (h + v) / 2
     centering_fixed = 1 - centering_raw
 
@@ -270,13 +290,10 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Confidence:", round(confidence, 2))
     st.write("Risk Level:", risk)
 
-    horizontal_psa = ratio_to_psa_centering(h)
-    vertical_psa = ratio_to_psa_centering(v)
-
     st.markdown("### Centering")
-    st.write("Horizontal Centering:", horizontal_psa)
-    st.write("Vertical Centering:", vertical_psa)
-    st.write("Centering Grade:", centering_subgrade(h, v))
+    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+    st.write("Vertical Centering:", ratio_to_psa_centering(v))
+    st.write("Centering Grade:", centering_psa_grade(h, v))
 
     st.markdown("### Subgrades (Out of 10)")
     st.write("Corners:", corner_subgrade(corner))
@@ -428,7 +445,7 @@ if use_manual_centering:
             st.write("Manual Vertical Ratio:", round(manual_v_ratio, 4))
             st.write("Manual Horizontal Centering:", ratio_to_psa_centering(manual_h_ratio))
             st.write("Manual Vertical Centering:", ratio_to_psa_centering(manual_v_ratio))
-            st.write("Manual Centering Grade:", centering_subgrade(manual_h_ratio, manual_v_ratio))
+            st.write("Manual Centering Grade:", centering_psa_grade(manual_h_ratio, manual_v_ratio))
 
 # ============================================================
 # RUN ANALYSIS
