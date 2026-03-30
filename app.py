@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6-centering-adjusted-corner-remap"
+MODEL_VERSION = "v6-corner-remap"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -203,11 +203,6 @@ def ratio_to_psa_centering(ratio: float) -> str:
 
 
 def centering_psa_grade(h: float, v: float) -> float:
-    """
-    Display-only centering grade.
-    47/53 and 46/54 should read as PSA 9 worthy.
-    Uses the weaker of horizontal/vertical.
-    """
     worst = min(float(h), float(v))
 
     if worst >= 0.90:
@@ -223,13 +218,14 @@ def centering_psa_grade(h: float, v: float) -> float:
     return 6.0
 
 
-def corner_subgrade(corner: float) -> float:
-    """
-    Display-only remap.
-    Prevents corner score from visually reading as a PSA 1 all the time.
-    """
+def remap_corner_for_model(corner: float) -> float:
     c = max(0.0, min(1.0, float(corner)))
-    score = 6.0 + (np.sqrt(c) * 4.0)
+    return float(np.clip(np.sqrt(c), 0, 1))
+
+
+def corner_subgrade(corner: float) -> float:
+    c_adj = remap_corner_for_model(corner)
+    score = 6.0 + (c_adj * 4.0)
     return round(max(1, min(10, score)), 2)
 
 
@@ -240,29 +236,27 @@ def edge_subgrade(edge: float) -> float:
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
-    """
-    Actual model score.
-    Keep stable unless recalibrating from data.
-    """
     centering_raw = (h + v) / 2
     centering_fixed = 1 - centering_raw
+
+    corner_adj = remap_corner_for_model(corner)
 
     grade = (
         6.49
         + 4.37 * centering_fixed
         - 0.17 * edge
-        + 4.92 * corner
+        + 4.92 * corner_adj
     )
 
-    if corner < 0.03:
+    if corner_adj < 0.20:
         grade = min(grade, 7.5)
-    elif corner < 0.07:
+    elif corner_adj < 0.32:
         grade = min(grade, 8.0)
 
-    if edge < 0.002 and corner > 0.05:
+    if edge < 0.002 and corner_adj > 0.45:
         grade = min(grade, 8.2)
 
-    if corner < 0.04:
+    if corner_adj < 0.25:
         grade = min(grade, 7.0)
 
     return round(max(1, min(10, grade)), 2)
@@ -548,6 +542,7 @@ if st.button("Run Analysis"):
     st.write("Horizontal Centering:", ratio_to_psa_centering(h))
     st.write("Vertical Centering:", ratio_to_psa_centering(v))
     st.write("Corner Score:", round(corner, 4))
+    st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
     st.write("Edge Score:", round(edge, 4))
 
     card_id = str(uuid.uuid4())
