@@ -164,6 +164,22 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     return round(max(1, min(10, grade)), 2)
 
 
+def centering_subgrade(h: float, v: float) -> float:
+    centering_raw = (h + v) / 2
+    score = 10 - ((1 - centering_raw) * 10)
+    return round(max(1, min(10, score)), 2)
+
+
+def corner_subgrade(corner: float) -> float:
+    score = 1 + (corner * 9)
+    return round(max(1, min(10, score)), 2)
+
+
+def edge_subgrade(edge: float) -> float:
+    score = 10 - (edge * 10)
+    return round(max(1, min(10, score)), 2)
+
+
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
@@ -186,10 +202,10 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.write("Confidence:", round(confidence, 2))
     st.write("Risk Level:", risk)
 
-    st.markdown("### Why")
-    st.write("Centering Impact:", round(1 - ((h + v) / 2), 3))
-    st.write("Corner Impact:", round(1 - corner, 3))
-    st.write("Edge Impact:", round(1 - edge, 3))
+    st.markdown("### Subgrades (Out of 10)")
+    st.write("Centering:", centering_subgrade(h, v))
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -276,18 +292,18 @@ def render_overlay_image(
     components.html(html, height=height + 10, width=width + 10, scrolling=False)
 
 # ============================================================
-# INTERACTIVE MANUAL CENTERING ASSIST
+# MANUAL CENTERING ASSIST
 # ============================================================
 
 st.markdown("## Manual Centering Assist")
-use_manual_centering = st.checkbox("Use interactive front centering assist")
+use_manual_centering = st.checkbox("Use front centering assist")
 
 manual_left = manual_right = manual_top = manual_bottom = None
 manual_h_ratio = manual_v_ratio = None
 
 if use_manual_centering:
     if full_card_front is None:
-        st.info("Upload a front image to use interactive centering assist.")
+        st.info("Upload a front image to use centering assist.")
     else:
         try:
             front_image = Image.open(full_card_front).convert("RGB")
@@ -323,7 +339,7 @@ if use_manual_centering:
             render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
 
         if right_x <= left_x or bottom_y <= top_y:
-            st.error("Right line must be to the right of left line, and bottom line must be below top line.")
+            st.error("Right line must be right of left line, and bottom line must be below top line.")
         else:
             manual_left = left_x
             manual_right = display_width - right_x
@@ -333,10 +349,6 @@ if use_manual_centering:
             manual_h_ratio = safe_ratio(manual_left, manual_right)
             manual_v_ratio = safe_ratio(manual_top, manual_bottom)
 
-            st.write("Manual Left Border:", round(manual_left, 2))
-            st.write("Manual Right Border:", round(manual_right, 2))
-            st.write("Manual Top Border:", round(manual_top, 2))
-            st.write("Manual Bottom Border:", round(manual_bottom, 2))
             st.write("Manual Horizontal Ratio:", round(manual_h_ratio, 4))
             st.write("Manual Vertical Ratio:", round(manual_v_ratio, 4))
 
@@ -354,11 +366,6 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
-    if use_manual_centering and (manual_h_ratio is None or manual_v_ratio is None):
-        st.error("Manual centering assist is enabled, but the guide lines are not set correctly.")
-        st.stop()
-
-    # ---------- FULL CARD API ----------
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -387,15 +394,11 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
-    # ---------- MANUAL CENTERING OVERRIDE ----------
-    if use_manual_centering:
+    if use_manual_centering and manual_h_ratio is not None and manual_v_ratio is not None:
         h = manual_h_ratio
         v = manual_v_ratio
-        st.info("Interactive manual front centering applied")
-        st.write("Horizontal Ratio Used:", round(h, 4))
-        st.write("Vertical Ratio Used:", round(v, 4))
+        st.info("Manual front centering applied")
 
-    # ---------- CORNER API ----------
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -437,7 +440,6 @@ if st.button("Run Analysis"):
     else:
         corner = min(scores)
 
-    # ---------- GRADE ----------
     grade = compute_grade(h, v, edge, corner)
 
     st.markdown("## Grade")
@@ -445,9 +447,11 @@ if st.button("Run Analysis"):
 
     decision_panel(grade, h, v, edge, corner)
 
-    # ========================================================
-    # SAVE IMAGES
-    # ========================================================
+    st.markdown("### Raw Feature Values")
+    st.write("Horizontal Ratio:", round(h, 4))
+    st.write("Vertical Ratio:", round(v, 4))
+    st.write("Corner Score:", round(corner, 4))
+    st.write("Edge Score:", round(edge, 4))
 
     card_id = str(uuid.uuid4())
 
@@ -478,10 +482,6 @@ if st.button("Run Analysis"):
         f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}"
         if full_card_back else None
     )
-
-    # ========================================================
-    # SAVE DATA
-    # ========================================================
 
     payload = {
         "card_id": card_id,
