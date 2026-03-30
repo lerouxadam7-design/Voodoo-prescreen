@@ -18,25 +18,82 @@ st.set_page_config(page_title="Voodoo Sports Grading", layout="wide")
 
 st.markdown("""
 <style>
+
+/* Main app background */
 .stApp {
     background: linear-gradient(90deg,#3F1D6A,#522C87,#5F3A96);
 }
-h1, h2, h3 {
+
+/* ALL TEXT */
+html, body, [class*="css"] {
+    color: white !important;
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6 {
     color: #C9A44D !important;
 }
-.stButton>button {
+
+/* Labels */
+label {
+    color: white !important;
+}
+
+/* Paragraphs, spans, divs */
+p, span, div {
+    color: white !important;
+}
+
+/* Markdown text */
+.stMarkdown {
+    color: white !important;
+}
+
+/* Info / captions */
+.small-note {
+    color: #dddddd !important;
+    font-size: 0.9rem;
+}
+
+/* Inputs */
+input, textarea {
+    color: white !important;
+}
+
+/* Selectbox text */
+div[data-baseweb="select"] {
+    color: black !important;
+}
+
+/* Buttons */
+.stButton > button {
     background-color: #C9A44D !important;
     color: black !important;
     border-radius: 10px !important;
     font-weight: bold !important;
 }
-label {
+
+/* Tables */
+thead tr th {
     color: white !important;
 }
-.small-note {
-    color: #dddddd;
-    font-size: 0.9rem;
+tbody tr td {
+    color: white !important;
 }
+
+/* Metrics */
+[data-testid="stMetricValue"] {
+    color: white !important;
+}
+[data-testid="stMetricLabel"] {
+    color: white !important;
+}
+
+/* Sliders */
+[data-testid="stSlider"] {
+    color: white !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
