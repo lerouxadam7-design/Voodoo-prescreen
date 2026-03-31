@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.4-hard-low-end-clamp"
+MODEL_VERSION = "v6.5-hard-psa6-detection"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -240,6 +240,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_fixed = 1 - centering_raw
 
     corner_adj = remap_corner_for_model(corner)
+    worst_centering = min(h, v)
 
     grade = (
         5.90
@@ -255,19 +256,18 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         grade = min(grade, 8.5)
 
     # Centering caps
-    worst_centering = min(h, v)
     if worst_centering < 0.70:
         grade = min(grade, 8.5)
     if worst_centering < 0.60:
         grade = min(grade, 7.5)
 
-    # Strong low-end correction
-    if corner_adj < 0.35 and worst_centering < 0.75:
-        grade -= 1.5
+    # Hard PSA 6 detection
+    if corner_adj < 0.32 and worst_centering < 0.78:
+        grade -= 2.2
     elif corner_adj < 0.30:
-        grade -= 1.2
+        grade -= 1.5
     elif corner_adj < 0.25:
-        grade -= 0.8
+        grade -= 1.0
 
     return round(max(1, min(10, grade)), 2)
 
