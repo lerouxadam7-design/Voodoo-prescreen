@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.5-hard-psa6-detection"
+MODEL_VERSION = "v6.6-hard-psa6-classifier-rotate-manual-centering"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -261,13 +261,11 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     if worst_centering < 0.60:
         grade = min(grade, 7.5)
 
-    # Hard PSA 6 detection
+    # Hard PSA 6 classification
     if corner_adj < 0.32 and worst_centering < 0.78:
-        grade -= 2.2
+        grade = min(grade, 6.9)
     elif corner_adj < 0.30:
-        grade -= 1.5
-    elif corner_adj < 0.25:
-        grade -= 1.0
+        grade -= 1.2
 
     return round(max(1, min(10, grade)), 2)
 
@@ -403,6 +401,8 @@ if use_manual_centering:
     else:
         try:
             front_image = Image.open(full_card_front).convert("RGB")
+            # Rotate 90 degrees clockwise for manual centering display
+            front_image = front_image.transpose(Image.Transpose.ROTATE_270)
         except Exception as e:
             st.error(f"Could not open front image: {e}")
             st.stop()
@@ -414,7 +414,7 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="small-note">Move the sliders to place the 4 guide lines directly on the measurable front borders.</div>',
+            '<div class="small-note">The image below is rotated 90 degrees clockwise for manual centering. Move the 4 guide lines onto the measurable borders.</div>',
             unsafe_allow_html=True
         )
 
