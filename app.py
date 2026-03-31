@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.1-corner-calibration-test"
+MODEL_VERSION = "v6.2-rebalanced-test"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -220,7 +220,7 @@ def centering_psa_grade(h: float, v: float) -> float:
 
 def remap_corner_for_model(corner: float) -> float:
     c = max(0.0, min(1.0, float(corner)))
-    return float(np.clip(np.sqrt(c) * 1.1, 0, 1))
+    return float(np.clip(np.sqrt(c), 0, 1))
 
 
 def corner_subgrade(corner: float) -> float:
@@ -242,22 +242,22 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     corner_adj = remap_corner_for_model(corner)
 
     grade = (
-        6.49
-        + 3.80 * centering_fixed
-        - 0.17 * edge
-        + 4.92 * corner_adj
+        5.90
+        + 3.20 * centering_fixed
+        - 0.15 * edge
+        + 3.60 * corner_adj
     )
 
     if corner_adj < 0.20:
         grade = min(grade, 7.5)
-    elif corner_adj < 0.32:
-        grade = min(grade, 8.0)
+    elif corner_adj < 0.35:
+        grade = min(grade, 8.5)
 
-    if edge < 0.002 and corner_adj > 0.45:
-        grade = min(grade, 8.2)
-
-    if corner_adj < 0.25:
-        grade = min(grade, 7.0)
+    worst_centering = min(h, v)
+    if worst_centering < 0.70:
+        grade = min(grade, 8.5)
+    if worst_centering < 0.60:
+        grade = min(grade, 7.5)
 
     return round(max(1, min(10, grade)), 2)
 
