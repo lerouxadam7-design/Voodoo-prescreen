@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.3-low-grade-correction"
+MODEL_VERSION = "v6.4-hard-low-end-clamp"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -261,12 +261,13 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     if worst_centering < 0.60:
         grade = min(grade, 7.5)
 
-    # Low-grade correction
-    if corner_adj < 0.30:
+    # Strong low-end correction
+    if corner_adj < 0.35 and worst_centering < 0.75:
+        grade -= 1.5
+    elif corner_adj < 0.30:
+        grade -= 1.2
+    elif corner_adj < 0.25:
         grade -= 0.8
-
-    if corner_adj < 0.22:
-        grade -= 0.5
 
     return round(max(1, min(10, grade)), 2)
 
