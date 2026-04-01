@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.7-smooth-penalty-monotonic"
+MODEL_VERSION = "v6.8-corrected-feature-compounding"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -204,7 +204,6 @@ def ratio_to_psa_centering(ratio: float) -> str:
 
 def centering_psa_grade(h: float, v: float) -> float:
     worst = min(float(h), float(v))
-
     if worst >= 0.90:
         return 10.0
     if worst >= 0.84:
@@ -231,41 +230,36 @@ def corner_subgrade(corner: float) -> float:
 
 def edge_subgrade(edge: float) -> float:
     e = max(0.0, min(1.0, float(edge)))
+    # lower edge score is better defect-wise, so convert to grade-like display
     score = 10.0 - (e * 10.0)
     return round(max(1, min(10, score)), 2)
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
-    centering_raw = (h + v) / 2
-    centering_fixed = 1 - centering_raw
+    # Better centering should increase grade
+    centering_strength = (float(h) + float(v)) / 2.0
 
+    # Better corners should increase grade
     corner_adj = remap_corner_for_model(corner)
 
-    # Base linear model
+    # Lower edge defect should increase grade
+    edge_penalty = max(0.0, float(edge))
+
     grade = (
-        5.90
-        + 3.20 * centering_fixed
-        - 0.15 * edge
-        + 3.60 * corner_adj
+        1.50
+        + 4.20 * centering_strength
+        + 3.20 * corner_adj
+        - 1.20 * edge_penalty
     )
 
-    # =====================================================
-    # Smooth penalties (no hard cuts)
-    # =====================================================
+    # Smooth penalties
+    worst_centering = min(float(h), float(v))
 
-    # Corner penalty
-    corner_penalty = 0.40 - corner_adj
-    if corner_penalty > 0:
-        grade -= corner_penalty * 2.5
+    corner_penalty = max(0.0, 0.38 - corner_adj)
+    grade -= corner_penalty * 2.2
 
-    # Centering penalty
-    worst_centering = min(h, v)
-    centering_penalty = 0.80 - worst_centering
-    if centering_penalty > 0:
-        grade -= centering_penalty * 2.0
-
-    # Edge penalty
-    grade -= edge * 2.0
+    centering_penalty = max(0.0, 0.78 - worst_centering)
+    grade -= centering_penalty * 2.0
 
     return round(max(1, min(10, grade)), 2)
 
@@ -401,7 +395,6 @@ if use_manual_centering:
     else:
         try:
             front_image = Image.open(full_card_front).convert("RGB")
-            # Rotate 90 degrees clockwise for manual centering display
             front_image = front_image.transpose(Image.Transpose.ROTATE_270)
         except Exception as e:
             st.error(f"Could not open front image: {e}")
