@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.6-hard-psa6-classifier-rotate-manual-centering"
+MODEL_VERSION = "v6.7-smooth-penalty-monotonic"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -240,8 +240,8 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_fixed = 1 - centering_raw
 
     corner_adj = remap_corner_for_model(corner)
-    worst_centering = min(h, v)
 
+    # Base linear model
     grade = (
         5.90
         + 3.20 * centering_fixed
@@ -249,23 +249,23 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         + 3.60 * corner_adj
     )
 
-    # Corner caps
-    if corner_adj < 0.20:
-        grade = min(grade, 7.5)
-    elif corner_adj < 0.35:
-        grade = min(grade, 8.5)
+    # =====================================================
+    # Smooth penalties (no hard cuts)
+    # =====================================================
 
-    # Centering caps
-    if worst_centering < 0.70:
-        grade = min(grade, 8.5)
-    if worst_centering < 0.60:
-        grade = min(grade, 7.5)
+    # Corner penalty
+    corner_penalty = 0.40 - corner_adj
+    if corner_penalty > 0:
+        grade -= corner_penalty * 2.5
 
-    # Hard PSA 6 classification
-    if corner_adj < 0.32 and worst_centering < 0.78:
-        grade = min(grade, 6.9)
-    elif corner_adj < 0.30:
-        grade -= 1.2
+    # Centering penalty
+    worst_centering = min(h, v)
+    centering_penalty = 0.80 - worst_centering
+    if centering_penalty > 0:
+        grade -= centering_penalty * 2.0
+
+    # Edge penalty
+    grade -= edge * 2.0
 
     return round(max(1, min(10, grade)), 2)
 
