@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.0-low-grade-detector"
+MODEL_VERSION = "v7.1-limiter-model"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -237,32 +237,26 @@ def edge_subgrade(edge: float) -> float:
 def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
     centering_strength = (float(h) + float(v)) / 2.0
     corner_adj = remap_corner_for_model(corner)
-    edge_penalty = max(0.0, float(edge))
+    edge_penalty = float(edge)
 
-    grade = (
-        3.20
-        + 4.10 * centering_strength
-        + 3.60 * corner_adj
-        - 1.00 * edge_penalty
-    )
+    # Base weighted average
+    base = (
+        4.0 * centering_strength +
+        3.5 * corner_adj +
+        (1.0 - edge_penalty)
+    ) / 8.5
 
-    # Smooth penalties
+    grade = base * 10.0
+
+    # =====================================================
+    # LIMITERS
+    # =====================================================
     worst_centering = min(float(h), float(v))
 
-    corner_penalty = max(0.0, 0.34 - corner_adj)
-    grade -= corner_penalty * 1.8
+    corner_limit = 5.5 + (corner_adj * 4.5)
+    centering_limit = 5.5 + (worst_centering * 4.5)
 
-    centering_penalty = max(0.0, 0.76 - worst_centering)
-    grade -= centering_penalty * 1.6
-
-    # =====================================================
-    # TRUE LOW-GRADE DETECTOR
-    # =====================================================
-    if corner_adj < 0.45 and centering_strength < 0.82:
-        grade = min(grade, 7.0)
-
-    if corner_adj < 0.40 and centering_strength < 0.78:
-        grade = min(grade, 6.5)
+    grade = min(grade, corner_limit, centering_limit)
 
     return round(max(1, min(10, grade)), 2)
 
