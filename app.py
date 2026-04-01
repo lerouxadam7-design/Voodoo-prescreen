@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v6.9-corrected-monotonic-balance"
+MODEL_VERSION = "v7.0-low-grade-detector"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -246,7 +246,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
         - 1.00 * edge_penalty
     )
 
-    # Smooth penalties only
+    # Smooth penalties
     worst_centering = min(float(h), float(v))
 
     corner_penalty = max(0.0, 0.34 - corner_adj)
@@ -254,6 +254,15 @@ def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
 
     centering_penalty = max(0.0, 0.76 - worst_centering)
     grade -= centering_penalty * 1.6
+
+    # =====================================================
+    # TRUE LOW-GRADE DETECTOR
+    # =====================================================
+    if corner_adj < 0.45 and centering_strength < 0.82:
+        grade = min(grade, 7.0)
+
+    if corner_adj < 0.40 and centering_strength < 0.78:
+        grade = min(grade, 6.5)
 
     return round(max(1, min(10, grade)), 2)
 
