@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.1-limiter-model"
+MODEL_VERSION = "v7.2-psa-cap-model"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -224,44 +224,62 @@ def remap_corner_for_model(corner: float) -> float:
 
 def corner_subgrade(corner: float) -> float:
     c_adj = remap_corner_for_model(corner)
-    score = 7.0 + (c_adj * 3.0)
+    score = 5.5 + (c_adj * 4.5)
     return round(max(1, min(10, score)), 2)
 
 
 def edge_subgrade(edge: float) -> float:
     e = max(0.0, min(1.0, float(edge)))
-    score = 10.0 - (e * 10.0)
+    score = 10.0 - (e * 6.0)
     return round(max(1, min(10, score)), 2)
 
 
-def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
+def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     centering_strength = (float(h) + float(v)) / 2.0
-    corner_adj = remap_corner_for_model(corner)
-    edge_penalty = float(edge)
-
-    # Base weighted average
-    base = (
-        4.0 * centering_strength +
-        3.5 * corner_adj +
-        (1.0 - edge_penalty)
-    ) / 8.5
-
-    grade = base * 10.0
-
-    # =====================================================
-    # LIMITERS
-    # =====================================================
     worst_centering = min(float(h), float(v))
+    corner_adj = remap_corner_for_model(corner)
+    edge_penalty = max(0.0, min(1.0, float(edge)))
 
-    corner_limit = 5.5 + (corner_adj * 4.5)
-    centering_limit = 5.5 + (worst_centering * 4.5)
+    # Candidate grade from blended quality
+    candidate = (
+        (4.0 * centering_strength) +
+        (3.5 * corner_adj) +
+        (1.0 * (1.0 - edge_penalty))
+    ) / 8.5 * 10.0
 
-    grade = min(grade, corner_limit, centering_limit)
+    # PSA-style caps: weakest feature limits overall grade
+    center_cap = 5.5 + (worst_centering * 4.5)
+    corner_cap = 5.5 + (corner_adj * 4.5)
+    edge_cap = 10.0 - (edge_penalty * 6.0)
 
-    return round(max(1, min(10, grade)), 2)
+    overall = min(candidate, center_cap, corner_cap, edge_cap)
+    overall = round(max(1.0, min(10.0, overall)), 2)
+
+    limiting_value = min(center_cap, corner_cap, edge_cap)
+    if limiting_value == center_cap:
+        limiter = "Centering"
+    elif limiting_value == corner_cap:
+        limiter = "Corners"
+    else:
+        limiter = "Edges"
+
+    return {
+        "overall_grade": overall,
+        "candidate_grade": round(candidate, 2),
+        "center_cap": round(center_cap, 2),
+        "corner_cap": round(corner_cap, 2),
+        "edge_cap": round(edge_cap, 2),
+        "limiter": limiter,
+    }
+
+
+def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
+    return compute_psa_caps(h, v, edge, corner)["overall_grade"]
 
 
 def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
+    caps = compute_psa_caps(h, v, edge, corner)
+
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
     elif grade >= 8.5:
@@ -282,6 +300,7 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
 
     st.write("Confidence:", round(confidence, 2))
     st.write("Risk Level:", risk)
+    st.write("Limiting Feature:", caps["limiter"])
 
     st.markdown("### Centering")
     st.write("Horizontal Centering:", ratio_to_psa_centering(h))
@@ -291,6 +310,12 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.markdown("### Subgrades (Out of 10)")
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
+
+    st.markdown("### PSA Cap Model")
+    st.write("Candidate Grade:", caps["candidate_grade"])
+    st.write("Centering Cap:", caps["center_cap"])
+    st.write("Corner Cap:", caps["corner_cap"])
+    st.write("Edge Cap:", caps["edge_cap"])
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -392,7 +417,6 @@ if use_manual_centering:
     else:
         try:
             front_image = Image.open(full_card_front).convert("RGB")
-            # Rotate 90 degrees clockwise for manual centering display
             front_image = front_image.transpose(Image.Transpose.ROTATE_270)
         except Exception as e:
             st.error(f"Could not open front image: {e}")
