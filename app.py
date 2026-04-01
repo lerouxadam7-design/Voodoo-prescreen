@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.2-psa-cap-model"
+MODEL_VERSION = "v7.3-psa-banded-centering-corner-edge"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -202,74 +202,133 @@ def ratio_to_psa_centering(ratio: float) -> str:
     return f"{low}/{high}"
 
 
+# ------------------------------------------------------------
+# PSA BANDED THRESHOLDS
+# ------------------------------------------------------------
+
 def centering_psa_grade(h: float, v: float) -> float:
+    """
+    User-specified centering bands:
+    - 45/55 or better on both ratios -> 10
+    - one ratio 44/56 to 40/60 -> 9
+    - 40/60 to 30/70 -> 8
+    - worse -> 7
+    Implemented using worst ratio.
+    """
     worst = min(float(h), float(v))
+
     if worst >= 0.90:
         return 10.0
-    if worst >= 0.84:
-        return 9.5
-    if worst >= 0.80:
+    elif worst >= 0.80:
         return 9.0
-    if worst >= 0.72:
+    elif worst >= 0.70:
         return 8.0
-    if worst >= 0.64:
+    else:
         return 7.0
-    return 6.0
+
+
+def centering_strength_psa(h: float, v: float) -> float:
+    """
+    Banded centering strength used in candidate score.
+    """
+    return centering_psa_grade(h, v) / 10.0
 
 
 def remap_corner_for_model(corner: float) -> float:
+    """
+    Raw corner score -> normalized corner strength.
+    """
     c = max(0.0, min(1.0, float(corner)))
     return float(np.clip(np.sqrt(c), 0, 1))
 
 
+def corner_grade_band(corner: float) -> float:
+    """
+    Corner thresholds 10-6 based on current observed score ranges.
+    Uses remapped corner score.
+    """
+    c = remap_corner_for_model(corner)
+
+    if c >= 0.60:
+        return 10.0
+    elif c >= 0.50:
+        return 9.0
+    elif c >= 0.40:
+        return 8.0
+    elif c >= 0.30:
+        return 7.0
+    else:
+        return 6.0
+
+
+def edge_grade_band(edge: float) -> float:
+    """
+    Edge thresholds 10-6.
+    Lower edge score is better.
+    """
+    e = max(0.0, min(1.0, float(edge)))
+
+    if e <= 0.008:
+        return 10.0
+    elif e <= 0.018:
+        return 9.0
+    elif e <= 0.035:
+        return 8.0
+    elif e <= 0.060:
+        return 7.0
+    else:
+        return 6.0
+
+
 def corner_subgrade(corner: float) -> float:
-    c_adj = remap_corner_for_model(corner)
-    score = 5.5 + (c_adj * 4.5)
-    return round(max(1, min(10, score)), 2)
+    return corner_grade_band(corner)
 
 
 def edge_subgrade(edge: float) -> float:
-    e = max(0.0, min(1.0, float(edge)))
-    score = 10.0 - (e * 6.0)
-    return round(max(1, min(10, score)), 2)
+    return edge_grade_band(edge)
 
+
+# ------------------------------------------------------------
+# PSA CAP MODEL
+# ------------------------------------------------------------
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
-    centering_strength = (float(h) + float(v)) / 2.0
-    worst_centering = min(float(h), float(v))
-    corner_adj = remap_corner_for_model(corner)
-    edge_penalty = max(0.0, min(1.0, float(edge)))
+    centering_strength = centering_strength_psa(h, v)
+    corner_strength = corner_grade_band(corner) / 10.0
+    edge_strength = edge_grade_band(edge) / 10.0
 
-    # Candidate grade from blended quality
+    # Candidate grade is a blended score
     candidate = (
         (4.0 * centering_strength) +
-        (3.5 * corner_adj) +
-        (1.0 * (1.0 - edge_penalty))
-    ) / 8.5 * 10.0
+        (3.5 * corner_strength) +
+        (1.5 * edge_strength)
+    ) / 9.0 * 10.0
 
-    # PSA-style caps: weakest feature limits overall grade
-    center_cap = 5.5 + (worst_centering * 4.5)
-    corner_cap = 5.5 + (corner_adj * 4.5)
-    edge_cap = 10.0 - (edge_penalty * 6.0)
+    # Feature caps
+    centering_cap = centering_psa_grade(h, v)
+    corner_cap = corner_grade_band(corner)
+    edge_cap = edge_grade_band(edge)
 
-    overall = min(candidate, center_cap, corner_cap, edge_cap)
+    overall = min(candidate, centering_cap, corner_cap, edge_cap)
     overall = round(max(1.0, min(10.0, overall)), 2)
 
-    limiting_value = min(center_cap, corner_cap, edge_cap)
-    if limiting_value == center_cap:
-        limiter = "Centering"
-    elif limiting_value == corner_cap:
-        limiter = "Corners"
-    else:
-        limiter = "Edges"
+    cap_values = {
+        "Centering": centering_cap,
+        "Corners": corner_cap,
+        "Edges": edge_cap
+    }
+    limiting_feature = min(cap_values, key=cap_values.get)
 
     return {
         "overall_grade": overall,
         "candidate_grade": round(candidate, 2),
-        "center_cap": round(center_cap, 2),
+        "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
-        "limiter": limiter,
+        "limiter": limiting_feature,
+        "centering_strength": round(centering_strength, 3),
+        "corner_strength": round(corner_strength, 3),
+        "edge_strength": round(edge_strength, 3),
     }
 
 
@@ -313,7 +372,7 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
 
     st.markdown("### PSA Cap Model")
     st.write("Candidate Grade:", caps["candidate_grade"])
-    st.write("Centering Cap:", caps["center_cap"])
+    st.write("Centering Cap:", caps["centering_cap"])
     st.write("Corner Cap:", caps["corner_cap"])
     st.write("Edge Cap:", caps["edge_cap"])
 
