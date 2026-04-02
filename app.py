@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.0-surface-integrated"
+MODEL_VERSION = "v8.1-surface-debugged"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -257,7 +257,6 @@ def edge_subgrade(edge: float) -> float:
 def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
-
 # ============================================================
 # PSA SOFT CAP MODEL WITH SURFACE
 # ============================================================
@@ -275,15 +274,12 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         (2.5 * surface_strength)
     ) / 10.5 * 10.0
 
-    # Weakness detector
     if centering_strength < 0.85 and corner_strength < 0.50:
         candidate -= 1.0
 
-    # Low-grade correction
     if centering_strength <= 0.80 and corner_strength <= 0.80:
         candidate -= 1.2
 
-    # Surface correction
     if surface_strength <= 0.70:
         candidate -= 0.8
     elif surface_strength <= 0.80:
@@ -624,6 +620,11 @@ if st.button("Run Analysis"):
     # ------------------------
     # Surface
     # ------------------------
+    surface = None
+    scratch_score = None
+    speckle_score = None
+    gloss_score = None
+
     try:
         sr = requests.post(
             f"{API_BASE}/analyze_surface",
@@ -632,26 +633,30 @@ if st.button("Run Analysis"):
         )
     except Exception as e:
         st.error(f"Surface API request failed: {e}")
-        st.stop()
+        sr = None
 
-    if sr.status_code != 200:
-        st.error(f"Surface API failed: {sr.text}")
-        st.stop()
+    if sr is not None and sr.status_code == 200:
+        try:
+            surface_data = sr.json()
+        except Exception:
+            surface_data = {"error": f"Surface API returned invalid JSON: {sr.text}"}
 
-    try:
-        surface_data = sr.json()
-    except Exception:
-        st.error(f"Surface API returned invalid JSON: {sr.text}")
-        st.stop()
+        if "error" in surface_data:
+            st.warning(f"Surface API error: {surface_data['error']}")
+        else:
+            surface = surface_data.get("surface_score")
+            scratch_score = surface_data.get("scratch_score")
+            speckle_score = surface_data.get("speckle_score")
+            gloss_score = surface_data.get("gloss_score")
+    elif sr is not None:
+        st.warning(f"Surface API failed: {sr.text}")
 
-    if "error" in surface_data:
-        st.error(f"Surface API error: {surface_data['error']}")
-        st.stop()
+    # Fallback so grading still works if surface call breaks
+    if surface is None:
+        surface = 0.05
+        st.warning("Surface model not applied. Using neutral fallback surface score of 0.05.")
 
-    surface = surface_data["surface_score"]
-    scratch_score = surface_data.get("scratch_score")
-    speckle_score = surface_data.get("speckle_score")
-    gloss_score = surface_data.get("gloss_score")
+    st.write("DEBUG surface:", surface)
 
     # ------------------------
     # Final grade
@@ -671,7 +676,7 @@ if st.button("Run Analysis"):
     st.write("Corner Score:", round(corner, 4))
     st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
     st.write("Edge Score:", round(edge, 4))
-    st.write("Surface Score:", round(surface, 4))
+    st.write("Surface Score:", round(float(surface), 4))
     if scratch_score is not None:
         st.write("Scratch Score:", round(float(scratch_score), 4))
     if speckle_score is not None:
@@ -726,10 +731,10 @@ if st.button("Run Analysis"):
         "vertical_ratio": v,
         "edge_score": edge,
         "corner_score": corner,
-        "surface_score": surface,
-        "scratch_score": scratch_score,
-        "speckle_score": speckle_score,
-        "gloss_score": gloss_score,
+        "surface_score": float(surface) if surface is not None else None,
+        "scratch_score": float(scratch_score) if scratch_score is not None else None,
+        "speckle_score": float(speckle_score) if speckle_score is not None else None,
+        "gloss_score": float(gloss_score) if gloss_score is not None else None,
         "calibrated_grade": grade,
         "front_image_url": front_url,
         "back_image_url": back_url,
@@ -743,6 +748,8 @@ if st.button("Run Analysis"):
         "front_horizontal_ratio_manual": manual_h_ratio if use_manual_centering else None,
         "front_vertical_ratio_manual": manual_v_ratio if use_manual_centering else None,
     }
+
+    st.write("DEBUG payload surface_score:", payload["surface_score"])
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -788,12 +795,16 @@ if user_role == "admin":
             if pd.isna(row.get("horizontal_ratio")) or pd.isna(row.get("vertical_ratio")):
                 continue
 
+            row_surface = row.get("surface_score", 0.05)
+            if pd.isna(row_surface):
+                row_surface = 0.05
+
             new_grade = compute_grade(
                 float(row["horizontal_ratio"]),
                 float(row["vertical_ratio"]),
                 float(row["edge_score"]),
                 float(row["corner_score"]),
-                float(row.get("surface_score", 0.05))
+                float(row_surface),
             )
 
             new_data = {
@@ -807,7 +818,7 @@ if user_role == "admin":
                 "vertical_ratio": row["vertical_ratio"],
                 "edge_score": row["edge_score"],
                 "corner_score": row["corner_score"],
-                "surface_score": row.get("surface_score"),
+                "surface_score": row_surface,
                 "scratch_score": row.get("scratch_score"),
                 "speckle_score": row.get("speckle_score"),
                 "gloss_score": row.get("gloss_score"),
