@@ -18,44 +18,31 @@ st.set_page_config(page_title="Voodoo Sports Grading", layout="wide")
 
 st.markdown("""
 <style>
-
-/* Background */
 .stApp {
     background: linear-gradient(90deg, #3F1D6A, #522C87, #5F3A96);
 }
-
-/* Default text white */
 html, body, [class*="css"] {
     color: white !important;
 }
-
-/* Headings gold */
 h1, h2, h3, h4, h5, h6 {
     color: #C9A44D !important;
 }
-
-/* Labels / markdown / captions white */
 label, p, span, div, .stMarkdown {
     color: white !important;
 }
-
 .small-note {
     color: #dddddd !important;
     font-size: 0.9rem;
 }
-
-/* Keep typeable text black */
 input, textarea {
     color: black !important;
     -webkit-text-fill-color: black !important;
     background-color: white !important;
 }
-
 input::placeholder, textarea::placeholder {
     color: #444 !important;
     -webkit-text-fill-color: #444 !important;
 }
-
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
@@ -63,32 +50,23 @@ input::placeholder, textarea::placeholder {
     -webkit-text-fill-color: black !important;
     background-color: white !important;
 }
-
-/* Selectbox text black */
 div[data-baseweb="select"] * {
     color: black !important;
 }
-
-/* Buttons */
 .stButton > button {
     background-color: #C9A44D !important;
     color: black !important;
     border-radius: 10px !important;
     font-weight: bold !important;
 }
-
-/* Tables */
 thead tr th,
 tbody tr td {
     color: white !important;
 }
-
-/* Metrics */
 [data-testid="stMetricValue"],
 [data-testid="stMetricLabel"] {
     color: white !important;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.5-psa-soft-cap-corner-tightened"
+MODEL_VERSION = "v7.7-threshold-optimized"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -109,13 +87,13 @@ TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
 headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
 }
 
 upload_headers = {
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "apikey": SUPABASE_KEY,
-    "Content-Type": "image/jpeg"
+    "Content-Type": "image/jpeg",
 }
 
 # ============================================================
@@ -129,7 +107,7 @@ if user_email:
     user_check = requests.get(
         f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
         headers=headers,
-        timeout=30
+        timeout=30,
     )
 
     if user_check.status_code != 200:
@@ -208,12 +186,11 @@ def ratio_to_psa_centering(ratio: float) -> str:
 
 def centering_psa_grade(h: float, v: float) -> float:
     """
-    User-specified centering bands:
-    - 45/55 or better on both ratios -> 10
-    - one ratio 44/56 to 40/60 -> 9
-    - 40/60 to 30/70 -> 8
-    - worse -> 7
-    Uses worst ratio.
+    User requested:
+    45/55 or better on both -> 10
+    44/56 to 40/60 -> 9
+    40/60 to 30/70 -> 8
+    worse -> 7
     """
     worst = min(float(h), float(v))
 
@@ -238,32 +215,37 @@ def remap_corner_for_model(corner: float) -> float:
 
 def corner_grade_band(corner: float) -> float:
     """
-    Tightened corner thresholds from current data.
+    Optimized from current dataset as far as the data supports.
+    Note: current features still do not fully separate PSA 6 vs PSA 8.
     """
     c = remap_corner_for_model(corner)
 
-    if c >= 0.62:
+    if c >= 0.60:
         return 10.0
-    elif c >= 0.52:
+    elif c >= 0.54:
         return 9.0
-    elif c >= 0.42:
+    elif c >= 0.50:
         return 8.0
-    elif c >= 0.34:
+    elif c >= 0.42:
         return 7.0
     else:
         return 6.0
 
 
 def edge_grade_band(edge: float) -> float:
+    """
+    Lower edge score is better.
+    Tightened based on current sample ranges.
+    """
     e = max(0.0, min(1.0, float(edge)))
 
-    if e <= 0.008:
+    if e <= 0.004:
         return 10.0
-    elif e <= 0.018:
+    elif e <= 0.008:
         return 9.0
-    elif e <= 0.035:
+    elif e <= 0.014:
         return 8.0
-    elif e <= 0.060:
+    elif e <= 0.022:
         return 7.0
     else:
         return 6.0
@@ -287,10 +269,14 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     edge_strength = edge_grade_band(edge) / 10.0
 
     candidate = (
-        (4.0 * centering_strength) +
-        (3.5 * corner_strength) +
-        (1.5 * edge_strength)
-    ) / 9.0 * 10.0
+        (3.5 * centering_strength) +
+        (2.5 * corner_strength) +
+        (4.5 * edge_strength)
+    ) / 10.5 * 10.0
+
+    # Global weakness detector
+    if centering_strength < 0.85 and corner_strength < 0.50:
+        candidate -= 1.0
 
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
@@ -299,14 +285,14 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     caps = [centering_cap, corner_cap, edge_cap]
     weakest = min(caps)
 
-    # Soft limiter instead of hard min
+    # Soft limiter
     overall = (0.7 * weakest) + (0.3 * candidate)
     overall = round(max(1.0, min(10.0, overall)), 2)
 
     cap_values = {
         "Centering": centering_cap,
         "Corners": corner_cap,
-        "Edges": edge_cap
+        "Edges": edge_cap,
     }
     limiting_feature = min(cap_values, key=cap_values.get)
 
@@ -536,7 +522,7 @@ if st.button("Run Analysis"):
         r = requests.post(
             f"{API_BASE}/analyze",
             files={"file": full_card_front.getvalue()},
-            timeout=60
+            timeout=60,
         )
     except Exception as e:
         st.error(f"Analyze API request failed: {e}")
@@ -578,7 +564,7 @@ if st.button("Run Analysis"):
             cr = requests.post(
                 f"{API_BASE}/analyze_corner",
                 files={"file": c.getvalue()},
-                timeout=60
+                timeout=60,
             )
         except Exception as e:
             st.error(f"Corner API request failed: {e}")
@@ -631,7 +617,7 @@ if st.button("Run Analysis"):
         f"{SUPABASE_URL}/storage/v1/object/card-images/{front_name}",
         headers=upload_headers,
         data=full_card_front.getvalue(),
-        timeout=60
+        timeout=60,
     )
     if front_upload.status_code not in [200, 201]:
         st.error(f"Front upload failed: {front_upload.text}")
@@ -641,7 +627,7 @@ if st.button("Run Analysis"):
             f"{SUPABASE_URL}/storage/v1/object/card-images/{back_name}",
             headers=upload_headers,
             data=full_card_back.getvalue(),
-            timeout=60
+            timeout=60,
         )
         if back_upload.status_code not in [200, 201]:
             st.error(f"Back upload failed: {back_upload.text}")
