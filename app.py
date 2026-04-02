@@ -655,6 +655,8 @@ if st.button("Run Analysis"):
     if surface is None:
         surface = 0.05
         st.warning("Surface model not applied. Using neutral fallback surface score of 0.05.")
+        st.write("DEBUG surface response:", surface_data if 'surface_data' in locals()
+        st.write(DEBUG surface final:", surface)
 
     st.write("DEBUG surface:", surface)
 
