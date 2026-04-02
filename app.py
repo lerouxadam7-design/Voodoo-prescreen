@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.7-threshold-optimized"
+MODEL_VERSION = "v7.8-psa-soft-cap-low-grade-correction"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -180,20 +180,8 @@ def ratio_to_psa_centering(ratio: float) -> str:
     return f"{low}/{high}"
 
 
-# ------------------------------------------------------------
-# PSA BANDED THRESHOLDS
-# ------------------------------------------------------------
-
 def centering_psa_grade(h: float, v: float) -> float:
-    """
-    User requested:
-    45/55 or better on both -> 10
-    44/56 to 40/60 -> 9
-    40/60 to 30/70 -> 8
-    worse -> 7
-    """
     worst = min(float(h), float(v))
-
     if worst >= 0.90:
         return 10.0
     elif worst >= 0.80:
@@ -214,10 +202,6 @@ def remap_corner_for_model(corner: float) -> float:
 
 
 def corner_grade_band(corner: float) -> float:
-    """
-    Optimized from current dataset as far as the data supports.
-    Note: current features still do not fully separate PSA 6 vs PSA 8.
-    """
     c = remap_corner_for_model(corner)
 
     if c >= 0.60:
@@ -233,10 +217,6 @@ def corner_grade_band(corner: float) -> float:
 
 
 def edge_grade_band(edge: float) -> float:
-    """
-    Lower edge score is better.
-    Tightened based on current sample ranges.
-    """
     e = max(0.0, min(1.0, float(edge)))
 
     if e <= 0.004:
@@ -259,10 +239,6 @@ def edge_subgrade(edge: float) -> float:
     return edge_grade_band(edge)
 
 
-# ------------------------------------------------------------
-# PSA SOFT CAP MODEL
-# ------------------------------------------------------------
-
 def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     centering_strength = centering_strength_psa(h, v)
     corner_strength = corner_grade_band(corner) / 10.0
@@ -278,6 +254,10 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     if centering_strength < 0.85 and corner_strength < 0.50:
         candidate -= 1.0
 
+    # Final low-grade correction
+    if centering_strength <= 0.80 and corner_strength <= 0.80:
+        candidate -= 1.2
+
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
@@ -285,7 +265,6 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     caps = [centering_cap, corner_cap, edge_cap]
     weakest = min(caps)
 
-    # Soft limiter
     overall = (0.7 * weakest) + (0.3 * candidate)
     overall = round(max(1.0, min(10.0, overall)), 2)
 
