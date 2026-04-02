@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.9-loosened-top-thresholds"
+MODEL_VERSION = "v8.0-surface-integrated"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -181,15 +181,7 @@ def ratio_to_psa_centering(ratio: float) -> str:
 
 
 def centering_psa_grade(h: float, v: float) -> float:
-    """
-    User-specified centering bands:
-    45/55 or better -> 10
-    44/56 to 40/60 -> 9
-    40/60 to 30/70 -> 8
-    worse -> 7
-    """
     worst = min(float(h), float(v))
-
     if worst >= 0.90:
         return 10.0
     elif worst >= 0.80:
@@ -210,9 +202,6 @@ def remap_corner_for_model(corner: float) -> float:
 
 
 def corner_grade_band(corner: float) -> float:
-    """
-    Loosened top-end thresholds so strong cards do not get capped too harshly.
-    """
     c = remap_corner_for_model(corner)
 
     if c >= 0.58:
@@ -228,10 +217,6 @@ def corner_grade_band(corner: float) -> float:
 
 
 def edge_grade_band(edge: float) -> float:
-    """
-    Lower edge score is better.
-    Loosened top-end thresholds.
-    """
     e = max(0.0, min(1.0, float(edge)))
 
     if e <= 0.006:
@@ -246,6 +231,21 @@ def edge_grade_band(edge: float) -> float:
         return 6.0
 
 
+def surface_grade_band(surface: float) -> float:
+    s = max(0.0, min(1.0, float(surface)))
+
+    if s <= 0.025:
+        return 10.0
+    elif s <= 0.040:
+        return 9.0
+    elif s <= 0.065:
+        return 8.0
+    elif s <= 0.090:
+        return 7.0
+    else:
+        return 6.0
+
+
 def corner_subgrade(corner: float) -> float:
     return corner_grade_band(corner)
 
@@ -254,22 +254,28 @@ def edge_subgrade(edge: float) -> float:
     return edge_grade_band(edge)
 
 
+def surface_subgrade(surface: float) -> float:
+    return surface_grade_band(surface)
+
+
 # ============================================================
-# PSA SOFT CAP MODEL
+# PSA SOFT CAP MODEL WITH SURFACE
 # ============================================================
 
-def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
+def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_strength = centering_strength_psa(h, v)
     corner_strength = corner_grade_band(corner) / 10.0
     edge_strength = edge_grade_band(edge) / 10.0
+    surface_strength = surface_grade_band(surface) / 10.0
 
     candidate = (
-        (3.5 * centering_strength) +
-        (2.5 * corner_strength) +
-        (4.5 * edge_strength)
+        (3.0 * centering_strength) +
+        (2.0 * corner_strength) +
+        (3.0 * edge_strength) +
+        (2.5 * surface_strength)
     ) / 10.5 * 10.0
 
-    # Global weakness detector
+    # Weakness detector
     if centering_strength < 0.85 and corner_strength < 0.50:
         candidate -= 1.0
 
@@ -277,14 +283,20 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
     if centering_strength <= 0.80 and corner_strength <= 0.80:
         candidate -= 1.2
 
+    # Surface correction
+    if surface_strength <= 0.70:
+        candidate -= 0.8
+    elif surface_strength <= 0.80:
+        candidate -= 0.3
+
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
+    surface_cap = surface_grade_band(surface)
 
-    caps = [centering_cap, corner_cap, edge_cap]
+    caps = [centering_cap, corner_cap, edge_cap, surface_cap]
     weakest = min(caps)
 
-    # Softer limiter than before
     overall = (0.55 * weakest) + (0.45 * candidate)
     overall = round(max(1.0, min(10.0, overall)), 2)
 
@@ -292,6 +304,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
         "Centering": centering_cap,
         "Corners": corner_cap,
         "Edges": edge_cap,
+        "Surface": surface_cap,
     }
     limiting_feature = min(cap_values, key=cap_values.get)
 
@@ -301,20 +314,29 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float) -> dict:
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
+        "surface_cap": round(surface_cap, 2),
         "weakest_cap": round(weakest, 2),
         "limiter": limiting_feature,
         "centering_strength": round(centering_strength, 3),
         "corner_strength": round(corner_strength, 3),
         "edge_strength": round(edge_strength, 3),
+        "surface_strength": round(surface_strength, 3),
     }
 
 
-def compute_grade(h: float, v: float, edge: float, corner: float) -> float:
-    return compute_psa_caps(h, v, edge, corner)["overall_grade"]
+def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
+    return compute_psa_caps(h, v, edge, corner, surface)["overall_grade"]
 
 
-def decision_panel(grade: float, h: float, v: float, edge: float, corner: float) -> None:
-    caps = compute_psa_caps(h, v, edge, corner)
+def decision_panel(
+    grade: float,
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float
+) -> None:
+    caps = compute_psa_caps(h, v, edge, corner, surface)
 
     if grade >= 9.2:
         st.success("STRONG SUBMIT")
@@ -346,12 +368,14 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float)
     st.markdown("### Subgrades (Out of 10)")
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
 
     st.markdown("### PSA Cap Model")
     st.write("Candidate Grade:", caps["candidate_grade"])
     st.write("Centering Cap:", caps["centering_cap"])
     st.write("Corner Cap:", caps["corner_cap"])
     st.write("Edge Cap:", caps["edge_cap"])
+    st.write("Surface Cap:", caps["surface_cap"])
     st.write("Weakest Cap:", caps["weakest_cap"])
 
 
@@ -517,6 +541,9 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
+    # ------------------------
+    # Front centering + edge
+    # ------------------------
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -550,13 +577,16 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
+    # ------------------------
+    # Corners
+    # ------------------------
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
     if corner4 is not None:
         corner_files.append(corner4)
 
-    scores = []
+    corner_scores = []
 
     for c in corner_files:
         try:
@@ -583,20 +613,55 @@ if st.button("Run Analysis"):
             st.error(f"Corner API error: {corner_data['error']}")
             continue
 
-        scores.append(corner_data["corner_score"])
+        corner_scores.append(corner_data["corner_score"])
 
-    if len(scores) == 0:
+    if len(corner_scores) == 0:
         corner = 0.5
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
-        corner = min(scores)
+        corner = min(corner_scores)
 
-    grade = compute_grade(h, v, edge, corner)
+    # ------------------------
+    # Surface
+    # ------------------------
+    try:
+        sr = requests.post(
+            f"{API_BASE}/analyze_surface",
+            files={"file": full_card_front.getvalue()},
+            timeout=60,
+        )
+    except Exception as e:
+        st.error(f"Surface API request failed: {e}")
+        st.stop()
+
+    if sr.status_code != 200:
+        st.error(f"Surface API failed: {sr.text}")
+        st.stop()
+
+    try:
+        surface_data = sr.json()
+    except Exception:
+        st.error(f"Surface API returned invalid JSON: {sr.text}")
+        st.stop()
+
+    if "error" in surface_data:
+        st.error(f"Surface API error: {surface_data['error']}")
+        st.stop()
+
+    surface = surface_data["surface_score"]
+    scratch_score = surface_data.get("scratch_score")
+    speckle_score = surface_data.get("speckle_score")
+    gloss_score = surface_data.get("gloss_score")
+
+    # ------------------------
+    # Final grade
+    # ------------------------
+    grade = compute_grade(h, v, edge, corner, surface)
 
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
-    decision_panel(grade, h, v, edge, corner)
+    decision_panel(grade, h, v, edge, corner, surface)
 
     st.markdown("### Raw Feature Values")
     st.write("Horizontal Ratio:", round(h, 4))
@@ -606,7 +671,17 @@ if st.button("Run Analysis"):
     st.write("Corner Score:", round(corner, 4))
     st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
     st.write("Edge Score:", round(edge, 4))
+    st.write("Surface Score:", round(surface, 4))
+    if scratch_score is not None:
+        st.write("Scratch Score:", round(float(scratch_score), 4))
+    if speckle_score is not None:
+        st.write("Speckle Score:", round(float(speckle_score), 4))
+    if gloss_score is not None:
+        st.write("Gloss Score:", round(float(gloss_score), 4))
 
+    # ------------------------
+    # Save images
+    # ------------------------
     card_id = str(uuid.uuid4())
 
     front_name = f"{card_id}_front.jpg"
@@ -637,6 +712,9 @@ if st.button("Run Analysis"):
         if full_card_back else None
     )
 
+    # ------------------------
+    # Save submission
+    # ------------------------
     payload = {
         "card_id": card_id,
         "model_version": MODEL_VERSION,
@@ -648,6 +726,10 @@ if st.button("Run Analysis"):
         "vertical_ratio": v,
         "edge_score": edge,
         "corner_score": corner,
+        "surface_score": surface,
+        "scratch_score": scratch_score,
+        "speckle_score": speckle_score,
+        "gloss_score": gloss_score,
         "calibrated_grade": grade,
         "front_image_url": front_url,
         "back_image_url": back_url,
@@ -710,7 +792,8 @@ if user_role == "admin":
                 float(row["horizontal_ratio"]),
                 float(row["vertical_ratio"]),
                 float(row["edge_score"]),
-                float(row["corner_score"])
+                float(row["corner_score"]),
+                float(row.get("surface_score", 0.05))
             )
 
             new_data = {
@@ -724,6 +807,10 @@ if user_role == "admin":
                 "vertical_ratio": row["vertical_ratio"],
                 "edge_score": row["edge_score"],
                 "corner_score": row["corner_score"],
+                "surface_score": row.get("surface_score"),
+                "scratch_score": row.get("scratch_score"),
+                "speckle_score": row.get("speckle_score"),
+                "gloss_score": row.get("gloss_score"),
                 "calibrated_grade": new_grade,
                 "front_image_url": row.get("front_image_url"),
                 "back_image_url": row.get("back_image_url"),
