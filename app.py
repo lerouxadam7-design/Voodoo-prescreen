@@ -76,7 +76,8 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.1-surface-debugged"
+MODEL_VERSION = "v8.2-surface-json-safe"
+st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -97,69 +98,21 @@ upload_headers = {
 }
 
 # ============================================================
-# AUTHORIZATION
-# ============================================================
-
-st.markdown("### Access")
-user_email = st.text_input("Enter Access Email")
-
-if user_email:
-    user_check = requests.get(
-        f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
-        headers=headers,
-        timeout=30,
-    )
-
-    if user_check.status_code != 200:
-        st.error("User lookup failed")
-        st.stop()
-
-    user_data = user_check.json()
-
-    if len(user_data) == 0:
-        st.warning("Access restricted")
-        st.stop()
-
-    user_role = user_data[0]["role"]
-else:
-    st.stop()
-
-# ============================================================
-# CARD INFO
-# ============================================================
-
-st.markdown("## Card Information")
-
-manufacturer = st.text_input("Manufacturer")
-stock_type = st.selectbox(
-    "Stock Type",
-    ["paper", "chrome", "refractor", "foil", "other"]
-)
-
-psa_is_graded = st.checkbox("PSA graded?")
-psa_actual_grade = None
-
-if psa_is_graded:
-    psa_actual_grade = st.number_input("PSA Grade", 1.0, 10.0, step=0.5)
-
-# ============================================================
-# IMAGE INPUTS
-# ============================================================
-
-st.markdown("## Upload Card Images")
-
-full_card_front = st.file_uploader("Front Image", ["jpg", "jpeg", "png"])
-full_card_back = st.file_uploader("Back Image", ["jpg", "jpeg", "png"])
-
-st.markdown("### Corner Images (2 Required)")
-corner1 = st.file_uploader("Corner 1 (Required)", ["jpg", "jpeg", "png"], key="corner1")
-corner2 = st.file_uploader("Corner 2 (Required)", ["jpg", "jpeg", "png"], key="corner2")
-corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg", "jpeg", "png"], key="corner3")
-corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg", "jpeg", "png"], key="corner4")
-
-# ============================================================
 # HELPERS
 # ============================================================
+
+def json_safe(value):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
+
 
 def safe_ratio(a: float, b: float) -> float:
     a = float(a)
@@ -203,7 +156,6 @@ def remap_corner_for_model(corner: float) -> float:
 
 def corner_grade_band(corner: float) -> float:
     c = remap_corner_for_model(corner)
-
     if c >= 0.58:
         return 10.0
     elif c >= 0.51:
@@ -218,7 +170,6 @@ def corner_grade_band(corner: float) -> float:
 
 def edge_grade_band(edge: float) -> float:
     e = max(0.0, min(1.0, float(edge)))
-
     if e <= 0.006:
         return 10.0
     elif e <= 0.012:
@@ -233,7 +184,6 @@ def edge_grade_band(edge: float) -> float:
 
 def surface_grade_band(surface: float) -> float:
     s = max(0.0, min(1.0, float(surface)))
-
     if s <= 0.025:
         return 10.0
     elif s <= 0.040:
@@ -257,9 +207,6 @@ def edge_subgrade(edge: float) -> float:
 def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
-# ============================================================
-# PSA SOFT CAP MODEL WITH SURFACE
-# ============================================================
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_strength = centering_strength_psa(h, v)
@@ -324,14 +271,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
     return compute_psa_caps(h, v, edge, corner, surface)["overall_grade"]
 
 
-def decision_panel(
-    grade: float,
-    h: float,
-    v: float,
-    edge: float,
-    corner: float,
-    surface: float
-) -> None:
+def decision_panel(grade: float, h: float, v: float, edge: float, corner: float, surface: float) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
     if grade >= 9.2:
@@ -344,7 +284,6 @@ def decision_panel(
         st.error("DO NOT SUBMIT")
 
     confidence = float(np.clip(1 - abs(h - v), 0, 1))
-
     if confidence > 0.85:
         risk = "Low"
     elif confidence > 0.65:
@@ -381,13 +320,7 @@ def pil_to_base64(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def render_overlay_image(
-    img: Image.Image,
-    left_x: float,
-    right_x: float,
-    top_y: float,
-    bottom_y: float
-) -> None:
+def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
 
@@ -413,50 +346,67 @@ def render_overlay_image(
                 z-index: 1;
             "
         />
-
-        <div style="
-            position: absolute;
-            top: 0;
-            left: {left_x}px;
-            width: 3px;
-            height: {height}px;
-            background: #00FF00;
-            z-index: 2;
-        "></div>
-
-        <div style="
-            position: absolute;
-            top: 0;
-            left: {right_x}px;
-            width: 3px;
-            height: {height}px;
-            background: #00FF00;
-            z-index: 2;
-        "></div>
-
-        <div style="
-            position: absolute;
-            top: {top_y}px;
-            left: 0;
-            width: {width}px;
-            height: 3px;
-            background: #00FF00;
-            z-index: 2;
-        "></div>
-
-        <div style="
-            position: absolute;
-            top: {bottom_y}px;
-            left: 0;
-            width: {width}px;
-            height: 3px;
-            background: #00FF00;
-            z-index: 2;
-        "></div>
+        <div style="position:absolute;top:0;left:{left_x}px;width:3px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:0;left:{right_x}px;width:3px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{top_y}px;left:0;width:{width}px;height:3px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{bottom_y}px;left:0;width:{width}px;height:3px;background:#00FF00;z-index:2;"></div>
     </div>
     """
-
     components.html(html, height=height + 10, width=width + 10, scrolling=False)
+
+# ============================================================
+# AUTHORIZATION
+# ============================================================
+
+st.markdown("### Access")
+user_email = st.text_input("Enter Access Email")
+
+if user_email:
+    user_check = requests.get(
+        f"{SUPABASE_URL}/rest/v1/authorized_users?email=eq.{user_email}",
+        headers=headers,
+        timeout=30,
+    )
+
+    if user_check.status_code != 200:
+        st.error("User lookup failed")
+        st.stop()
+
+    user_data = user_check.json()
+    if len(user_data) == 0:
+        st.warning("Access restricted")
+        st.stop()
+
+    user_role = user_data[0]["role"]
+else:
+    st.stop()
+
+# ============================================================
+# CARD INFO
+# ============================================================
+
+st.markdown("## Card Information")
+manufacturer = st.text_input("Manufacturer")
+stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
+
+psa_is_graded = st.checkbox("PSA graded?")
+psa_actual_grade = None
+if psa_is_graded:
+    psa_actual_grade = st.number_input("PSA Grade", 1.0, 10.0, step=0.5)
+
+# ============================================================
+# IMAGE INPUTS
+# ============================================================
+
+st.markdown("## Upload Card Images")
+full_card_front = st.file_uploader("Front Image", ["jpg", "jpeg", "png"])
+full_card_back = st.file_uploader("Back Image", ["jpg", "jpeg", "png"])
+
+st.markdown("### Corner Images (2 Required)")
+corner1 = st.file_uploader("Corner 1 (Required)", ["jpg", "jpeg", "png"], key="corner1")
+corner2 = st.file_uploader("Corner 2 (Required)", ["jpg", "jpeg", "png"], key="corner2")
+corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg", "jpeg", "png"], key="corner3")
+corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg", "jpeg", "png"], key="corner4")
 
 # ============================================================
 # MANUAL CENTERING ASSIST
@@ -491,7 +441,6 @@ if use_manual_centering:
         )
 
         col_a, col_b = st.columns([1, 2])
-
         with col_a:
             left_percent = st.slider("Left Line", 0, 100, 8)
             right_percent = st.slider("Right Line", 0, 100, 92)
@@ -513,7 +462,6 @@ if use_manual_centering:
             manual_right = display_width - right_x
             manual_top = top_y
             manual_bottom = display_height - bottom_y
-
             manual_h_ratio = safe_ratio(manual_left, manual_right)
             manual_v_ratio = safe_ratio(manual_top, manual_bottom)
 
@@ -528,7 +476,6 @@ if use_manual_centering:
 # ============================================================
 
 if st.button("Run Analysis"):
-
     if full_card_front is None:
         st.error("Front image required")
         st.stop()
@@ -537,9 +484,6 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
-    # ------------------------
-    # Front centering + edge
-    # ------------------------
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -573,9 +517,6 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
-    # ------------------------
-    # Corners
-    # ------------------------
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -583,7 +524,6 @@ if st.button("Run Analysis"):
         corner_files.append(corner4)
 
     corner_scores = []
-
     for c in corner_files:
         try:
             cr = requests.post(
@@ -617,9 +557,6 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
-    # ------------------------
-    # Surface
-    # ------------------------
     surface = None
     scratch_score = None
     speckle_score = None
@@ -635,6 +572,7 @@ if st.button("Run Analysis"):
         st.error(f"Surface API request failed: {e}")
         sr = None
 
+    surface_data = None
     if sr is not None and sr.status_code == 200:
         try:
             surface_data = sr.json()
@@ -651,16 +589,13 @@ if st.button("Run Analysis"):
     elif sr is not None:
         st.warning(f"Surface API failed: {sr.text}")
 
-    # Fallback so grading still works if surface call breaks
     if surface is None:
         surface = 0.05
         st.warning("Surface model not applied. Using neutral fallback surface score of 0.05.")
-        
-        st.write("DEBUG surface:", surface)
 
-    # ------------------------
-    # Final grade
-    # ------------------------
+    st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface response")
+    st.write("DEBUG surface final:", surface)
+
     grade = compute_grade(h, v, edge, corner, surface)
 
     st.markdown("## Grade")
@@ -684,11 +619,7 @@ if st.button("Run Analysis"):
     if gloss_score is not None:
         st.write("Gloss Score:", round(float(gloss_score), 4))
 
-    # ------------------------
-    # Save images
-    # ------------------------
     card_id = str(uuid.uuid4())
-
     front_name = f"{card_id}_front.jpg"
     back_name = f"{card_id}_back.jpg"
 
@@ -717,36 +648,33 @@ if st.button("Run Analysis"):
         if full_card_back else None
     )
 
-    # ------------------------
-    # Save submission
-    # ------------------------
     payload = {
         "card_id": card_id,
         "model_version": MODEL_VERSION,
-        "manufacturer": manufacturer,
-        "stock_type": stock_type,
-        "psa_is_graded": psa_is_graded,
-        "psa_actual_grade": psa_actual_grade,
-        "horizontal_ratio": h,
-        "vertical_ratio": v,
-        "edge_score": edge,
-        "corner_score": corner,
-        "surface_score": float(surface) if surface is not None else None,
-        "scratch_score": float(scratch_score) if scratch_score is not None else None,
-        "speckle_score": float(speckle_score) if speckle_score is not None else None,
-        "gloss_score": float(gloss_score) if gloss_score is not None else None,
-        "calibrated_grade": grade,
-        "front_image_url": front_url,
-        "back_image_url": back_url,
+        "manufacturer": json_safe(manufacturer),
+        "stock_type": json_safe(stock_type),
+        "psa_is_graded": json_safe(psa_is_graded),
+        "psa_actual_grade": json_safe(psa_actual_grade),
+        "horizontal_ratio": json_safe(h),
+        "vertical_ratio": json_safe(v),
+        "edge_score": json_safe(edge),
+        "corner_score": json_safe(corner),
+        "surface_score": json_safe(surface),
+        "scratch_score": json_safe(scratch_score),
+        "speckle_score": json_safe(speckle_score),
+        "gloss_score": json_safe(gloss_score),
+        "calibrated_grade": json_safe(grade),
+        "front_image_url": json_safe(front_url),
+        "back_image_url": json_safe(back_url),
         "submitted_by": user_email,
         "created_at": str(datetime.now()),
-        "manual_centering_used": use_manual_centering,
-        "front_left_measurement": manual_left if use_manual_centering else None,
-        "front_right_measurement": manual_right if use_manual_centering else None,
-        "front_top_measurement": manual_top if use_manual_centering else None,
-        "front_bottom_measurement": manual_bottom if use_manual_centering else None,
-        "front_horizontal_ratio_manual": manual_h_ratio if use_manual_centering else None,
-        "front_vertical_ratio_manual": manual_v_ratio if use_manual_centering else None,
+        "manual_centering_used": json_safe(use_manual_centering),
+        "front_left_measurement": json_safe(manual_left if use_manual_centering else None),
+        "front_right_measurement": json_safe(manual_right if use_manual_centering else None),
+        "front_top_measurement": json_safe(manual_top if use_manual_centering else None),
+        "front_bottom_measurement": json_safe(manual_bottom if use_manual_centering else None),
+        "front_horizontal_ratio_manual": json_safe(manual_h_ratio if use_manual_centering else None),
+        "front_vertical_ratio_manual": json_safe(manual_v_ratio if use_manual_centering else None),
     }
 
     st.write("DEBUG payload surface_score:", payload["surface_score"])
@@ -778,13 +706,10 @@ if user_role == "admin":
 
     if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
         dfv = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
-
         if len(dfv):
             dfv.loc[:, "error"] = dfv["calibrated_grade"] - dfv["psa_actual_grade"]
-
             st.write("MAE:", round(abs(dfv["error"]).mean(), 3))
             st.write("Bias:", round(dfv["error"].mean(), 3))
-
             st.bar_chart(dfv["error"])
 
     st.markdown("---")
@@ -808,23 +733,23 @@ if user_role == "admin":
             )
 
             new_data = {
-                "card_id": row["card_id"],
+                "card_id": json_safe(row.get("card_id")),
                 "model_version": MODEL_VERSION,
-                "manufacturer": row.get("manufacturer"),
-                "stock_type": row.get("stock_type"),
-                "psa_is_graded": row.get("psa_is_graded"),
-                "psa_actual_grade": row.get("psa_actual_grade"),
-                "horizontal_ratio": row["horizontal_ratio"],
-                "vertical_ratio": row["vertical_ratio"],
-                "edge_score": row["edge_score"],
-                "corner_score": row["corner_score"],
-                "surface_score": row_surface,
-                "scratch_score": row.get("scratch_score"),
-                "speckle_score": row.get("speckle_score"),
-                "gloss_score": row.get("gloss_score"),
-                "calibrated_grade": new_grade,
-                "front_image_url": row.get("front_image_url"),
-                "back_image_url": row.get("back_image_url"),
+                "manufacturer": json_safe(row.get("manufacturer")),
+                "stock_type": json_safe(row.get("stock_type")),
+                "psa_is_graded": json_safe(row.get("psa_is_graded")),
+                "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
+                "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
+                "vertical_ratio": json_safe(row.get("vertical_ratio")),
+                "edge_score": json_safe(row.get("edge_score")),
+                "corner_score": json_safe(row.get("corner_score")),
+                "surface_score": json_safe(row_surface),
+                "scratch_score": json_safe(row.get("scratch_score")),
+                "speckle_score": json_safe(row.get("speckle_score")),
+                "gloss_score": json_safe(row.get("gloss_score")),
+                "calibrated_grade": json_safe(new_grade),
+                "front_image_url": json_safe(row.get("front_image_url")),
+                "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
                 "created_at": str(datetime.now())
             }
