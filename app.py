@@ -98,7 +98,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v7.4-soft-psa-cap-model"
+MODEL_VERSION = "v7.5-psa-soft-cap-corner-tightened"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -213,6 +213,7 @@ def centering_psa_grade(h: float, v: float) -> float:
     - one ratio 44/56 to 40/60 -> 9
     - 40/60 to 30/70 -> 8
     - worse -> 7
+    Uses worst ratio.
     """
     worst = min(float(h), float(v))
 
@@ -236,15 +237,18 @@ def remap_corner_for_model(corner: float) -> float:
 
 
 def corner_grade_band(corner: float) -> float:
+    """
+    Tightened corner thresholds from current data.
+    """
     c = remap_corner_for_model(corner)
 
-    if c >= 0.60:
+    if c >= 0.62:
         return 10.0
-    elif c >= 0.50:
+    elif c >= 0.52:
         return 9.0
-    elif c >= 0.40:
+    elif c >= 0.42:
         return 8.0
-    elif c >= 0.30:
+    elif c >= 0.34:
         return 7.0
     else:
         return 6.0
