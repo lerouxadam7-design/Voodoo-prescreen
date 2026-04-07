@@ -76,8 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.2-surface-json-safe"
-st.write("RUNNING VERSION:", MODEL_VERSION)
+MODEL_VERSION = "v8.3-surface-persistence-fixed"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -97,6 +96,8 @@ upload_headers = {
     "Content-Type": "image/jpeg",
 }
 
+st.write("RUNNING VERSION:", MODEL_VERSION)
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -111,6 +112,8 @@ def json_safe(value):
         pass
     if isinstance(value, (np.floating, np.integer)):
         return value.item()
+    if isinstance(value, np.bool_):
+        return bool(value)
     return value
 
 
@@ -271,7 +274,14 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
     return compute_psa_caps(h, v, edge, corner, surface)["overall_grade"]
 
 
-def decision_panel(grade: float, h: float, v: float, edge: float, corner: float, surface: float) -> None:
+def decision_panel(
+    grade: float,
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float
+) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
     if grade >= 9.2:
@@ -284,12 +294,7 @@ def decision_panel(grade: float, h: float, v: float, edge: float, corner: float,
         st.error("DO NOT SUBMIT")
 
     confidence = float(np.clip(1 - abs(h - v), 0, 1))
-    if confidence > 0.85:
-        risk = "Low"
-    elif confidence > 0.65:
-        risk = "Moderate"
-    else:
-        risk = "High"
+    risk = "Low" if confidence > 0.85 else "Moderate" if confidence > 0.65 else "High"
 
     st.write("Confidence:", round(confidence, 2))
     st.write("Risk Level:", risk)
@@ -320,7 +325,13 @@ def pil_to_base64(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
+def render_overlay_image(
+    img: Image.Image,
+    left_x: float,
+    right_x: float,
+    top_y: float,
+    bottom_y: float
+) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
 
@@ -386,6 +397,7 @@ else:
 # ============================================================
 
 st.markdown("## Card Information")
+
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
@@ -399,6 +411,7 @@ if psa_is_graded:
 # ============================================================
 
 st.markdown("## Upload Card Images")
+
 full_card_front = st.file_uploader("Front Image", ["jpg", "jpeg", "png"])
 full_card_back = st.file_uploader("Back Image", ["jpg", "jpeg", "png"])
 
@@ -484,6 +497,7 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
+    # Front centering + edge
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -517,6 +531,7 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
+    # Corners
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -557,10 +572,12 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
+    # Surface
     surface = None
     scratch_score = None
     speckle_score = None
     gloss_score = None
+    surface_data = None
 
     try:
         sr = requests.post(
@@ -569,10 +586,9 @@ if st.button("Run Analysis"):
             timeout=60,
         )
     except Exception as e:
-        st.error(f"Surface API request failed: {e}")
+        st.warning(f"Surface API request failed: {e}")
         sr = None
 
-    surface_data = None
     if sr is not None and sr.status_code == 200:
         try:
             surface_data = sr.json()
@@ -593,15 +609,16 @@ if st.button("Run Analysis"):
         surface = 0.05
         st.warning("Surface model not applied. Using neutral fallback surface score of 0.05.")
 
-    st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface response")
+    st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
     st.write("DEBUG surface final:", surface)
 
-    grade = compute_grade(h, v, edge, corner, surface)
+    # Final grade
+    grade = compute_grade(h, v, edge, corner, float(surface))
 
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
-    decision_panel(grade, h, v, edge, corner, surface)
+    decision_panel(grade, h, v, edge, corner, float(surface))
 
     st.markdown("### Raw Feature Values")
     st.write("Horizontal Ratio:", round(h, 4))
@@ -619,6 +636,7 @@ if st.button("Run Analysis"):
     if gloss_score is not None:
         st.write("Gloss Score:", round(float(gloss_score), 4))
 
+    # Save images
     card_id = str(uuid.uuid4())
     front_name = f"{card_id}_front.jpg"
     back_name = f"{card_id}_back.jpg"
@@ -643,10 +661,7 @@ if st.button("Run Analysis"):
             st.error(f"Back upload failed: {back_upload.text}")
 
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
-    back_url = (
-        f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}"
-        if full_card_back else None
-    )
+    back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if full_card_back else None
 
     payload = {
         "card_id": card_id,
@@ -659,7 +674,7 @@ if st.button("Run Analysis"):
         "vertical_ratio": json_safe(v),
         "edge_score": json_safe(edge),
         "corner_score": json_safe(corner),
-        "surface_score": json_safe(surface),
+        "surface_score": json_safe(float(surface) if surface is not None else None),
         "scratch_score": json_safe(scratch_score),
         "speckle_score": json_safe(speckle_score),
         "gloss_score": json_safe(gloss_score),
@@ -720,16 +735,18 @@ if user_role == "admin":
             if pd.isna(row.get("horizontal_ratio")) or pd.isna(row.get("vertical_ratio")):
                 continue
 
-            row_surface = row.get("surface_score", 0.05)
-            if pd.isna(row_surface):
-                row_surface = 0.05
+            # IMPORTANT:
+            # Keep stored surface as-is.
+            # Only use fallback for grade calculation when surface is missing.
+            row_surface = row.get("surface_score")
+            calc_surface = 0.05 if pd.isna(row_surface) else float(row_surface)
 
             new_grade = compute_grade(
                 float(row["horizontal_ratio"]),
                 float(row["vertical_ratio"]),
                 float(row["edge_score"]),
                 float(row["corner_score"]),
-                float(row_surface),
+                calc_surface,
             )
 
             new_data = {
