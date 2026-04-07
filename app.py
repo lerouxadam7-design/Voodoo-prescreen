@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.7-4feature-final-balance"
+MODEL_VERSION = "v8.8-locked-final"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -212,12 +212,22 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
+    # Locked 4-feature balance
     candidate = (
-        0.30 * centering_cap +
-        0.20 * corner_cap +
-        0.20 * edge_cap +
-        0.30 * surface_cap
+        0.28 * centering_cap +
+        0.22 * corner_cap +
+        0.22 * edge_cap +
+        0.28 * surface_cap
     )
+
+    # High-end boost
+    if (
+        centering_cap >= 9 and
+        corner_cap >= 9 and
+        edge_cap >= 9 and
+        surface_cap >= 9
+    ):
+        candidate += 0.6
 
     # Surface moderation for strong structural cards
     if (
@@ -226,6 +236,13 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         surface_cap <= 7
     ):
         candidate += 0.4
+
+    # Weak card suppression
+    if (
+        surface_cap <= 7 and
+        corner_cap <= 7
+    ):
+        candidate -= 0.6
 
     overall = round(max(1.0, min(10.0, candidate)), 2)
 
