@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.4-rescore-surface-backfill"
+MODEL_VERSION = "v8.5-rescore-new-submissions"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -776,7 +776,7 @@ if user_role == "admin":
             row_speckle = row.get("speckle_score")
             row_gloss = row.get("gloss_score")
 
-            # Backfill surface fields if missing and front image exists
+            # Backfill surface for older rows if missing
             if pd.isna(row_surface):
                 fetched_surface, fetched_scratch, fetched_speckle, fetched_gloss = backfill_surface_from_url(
                     row.get("front_image_url")
@@ -788,7 +788,7 @@ if user_role == "admin":
                     row_speckle = fetched_speckle
                     row_gloss = fetched_gloss
 
-            # Use fallback only for grade calculation, not for saving
+            # Use fallback only for calculation, not storage
             calc_surface = 0.05 if pd.isna(row_surface) else float(row_surface)
 
             new_grade = compute_grade(
@@ -799,31 +799,41 @@ if user_role == "admin":
                 float(calc_surface),
             )
 
-            # PATCH existing row by card_id instead of POSTing a new row
-            patch_url = f"{TABLE_URL}?card_id=eq.{row['card_id']}"
+            new_card_id = str(uuid.uuid4())
 
-            update_data = {
+            new_data = {
+                "card_id": new_card_id,
                 "model_version": MODEL_VERSION,
+                "manufacturer": json_safe(row.get("manufacturer")),
+                "stock_type": json_safe(row.get("stock_type")),
+                "psa_is_graded": json_safe(row.get("psa_is_graded")),
+                "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
+                "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
+                "vertical_ratio": json_safe(row.get("vertical_ratio")),
+                "edge_score": json_safe(row.get("edge_score")),
+                "corner_score": json_safe(row.get("corner_score")),
                 "surface_score": json_safe(row_surface),
                 "scratch_score": json_safe(row_scratch),
                 "speckle_score": json_safe(row_speckle),
                 "gloss_score": json_safe(row_gloss),
                 "calibrated_grade": json_safe(new_grade),
+                "front_image_url": json_safe(row.get("front_image_url")),
+                "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
-                "created_at": str(datetime.now())
+                "created_at": str(datetime.now()),
             }
 
             try:
-                patch_resp = requests.patch(patch_url, json=update_data, headers=headers, timeout=30)
-                if patch_resp.status_code not in [200, 204]:
-                    status_box.warning(f"Patch failed for card_id {row['card_id']}: {patch_resp.text}")
+                post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
+                if post_resp.status_code not in [200, 201]:
+                    status_box.warning(f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}")
             except Exception as e:
-                status_box.warning(f"Patch exception for card_id {row['card_id']}: {e}")
+                status_box.warning(f"Post exception for source card_id {row.get('card_id')}: {e}")
 
             status_box.write(
-                f"Processed {idx}/{total_rows} | card_id={row['card_id']} | "
-                f"surface={json_safe(row_surface)} | grade={new_grade}"
+                f"Processed {idx}/{total_rows} | source_card_id={row.get('card_id')} | "
+                f"new_card_id={new_card_id} | surface={json_safe(row_surface)} | grade={new_grade}"
             )
             progress.progress(idx / max(total_rows, 1))
 
-        st.success("Re-scored and backfilled surface where possible.")
+        st.success("Re-scored and created new submissions.")
