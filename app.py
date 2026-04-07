@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.5-rescore-new-submissions"
+MODEL_VERSION = "v8.6-best-fit-4feature-blend"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -186,13 +186,13 @@ def edge_grade_band(edge: float) -> float:
 
 def surface_grade_band(surface: float) -> float:
     s = max(0.0, min(1.0, float(surface)))
-    if s <= 0.025:
+    if s <= 0.09:
         return 10.0
-    elif s <= 0.040:
+    elif s <= 0.10:
         return 9.0
-    elif s <= 0.065:
+    elif s <= 0.12:
         return 8.0
-    elif s <= 0.090:
+    elif s <= 0.14:
         return 7.0
     else:
         return 6.0
@@ -211,39 +211,20 @@ def surface_subgrade(surface: float) -> float:
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
-    centering_strength = centering_strength_psa(h, v)
-    corner_strength = corner_grade_band(corner) / 10.0
-    edge_strength = edge_grade_band(edge) / 10.0
-    surface_strength = surface_grade_band(surface) / 10.0
-
-    candidate = (
-        (3.0 * centering_strength) +
-        (2.0 * corner_strength) +
-        (3.0 * edge_strength) +
-        (2.5 * surface_strength)
-    ) / 10.5 * 10.0
-
-    if centering_strength < 0.85 and corner_strength < 0.50:
-        candidate -= 1.0
-
-    if centering_strength <= 0.80 and corner_strength <= 0.80:
-        candidate -= 1.2
-
-    if surface_strength <= 0.70:
-        candidate -= 0.8
-    elif surface_strength <= 0.80:
-        candidate -= 0.3
-
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    caps = [centering_cap, corner_cap, edge_cap, surface_cap]
-    weakest = min(caps)
+    # Best-fit simplified 4-feature blend from latest dataset
+    candidate = (
+        0.15 * centering_cap +
+        0.10 * corner_cap +
+        0.10 * edge_cap +
+        0.65 * surface_cap
+    )
 
-    overall = (0.55 * weakest) + (0.45 * candidate)
-    overall = round(max(1.0, min(10.0, overall)), 2)
+    overall = round(max(1.0, min(10.0, candidate)), 2)
 
     cap_values = {
         "Centering": centering_cap,
@@ -260,12 +241,12 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
         "surface_cap": round(surface_cap, 2),
-        "weakest_cap": round(weakest, 2),
+        "weakest_cap": round(min(cap_values.values()), 2),
         "limiter": limiting_feature,
-        "centering_strength": round(centering_strength, 3),
-        "corner_strength": round(corner_strength, 3),
-        "edge_strength": round(edge_strength, 3),
-        "surface_strength": round(surface_strength, 3),
+        "centering_strength": round(centering_cap / 10.0, 3),
+        "corner_strength": round(corner_cap / 10.0, 3),
+        "edge_strength": round(edge_cap / 10.0, 3),
+        "surface_strength": round(surface_cap / 10.0, 3),
     }
 
 
@@ -309,13 +290,12 @@ def decision_panel(
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
 
-    st.markdown("### PSA Cap Model")
-    st.write("Candidate Grade:", caps["candidate_grade"])
-    st.write("Centering Cap:", caps["centering_cap"])
-    st.write("Corner Cap:", caps["corner_cap"])
-    st.write("Edge Cap:", caps["edge_cap"])
-    st.write("Surface Cap:", caps["surface_cap"])
-    st.write("Weakest Cap:", caps["weakest_cap"])
+    st.markdown("### 4-Feature Blend")
+    st.write("Blended Grade:", caps["candidate_grade"])
+    st.write("Centering Band:", caps["centering_cap"])
+    st.write("Corner Band:", caps["corner_cap"])
+    st.write("Edge Band:", caps["edge_cap"])
+    st.write("Surface Band:", caps["surface_cap"])
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -637,8 +617,8 @@ if st.button("Run Analysis"):
         st.warning(f"Surface API failed: {sr.text}")
 
     if surface is None:
-        surface = 0.05
-        st.warning("Surface model not applied. Using neutral fallback surface score of 0.05.")
+        surface = 0.12
+        st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
     st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
     st.write("DEBUG surface final:", surface)
@@ -776,20 +756,17 @@ if user_role == "admin":
             row_speckle = row.get("speckle_score")
             row_gloss = row.get("gloss_score")
 
-            # Backfill surface for older rows if missing
             if pd.isna(row_surface):
                 fetched_surface, fetched_scratch, fetched_speckle, fetched_gloss = backfill_surface_from_url(
                     row.get("front_image_url")
                 )
-
                 if fetched_surface is not None:
                     row_surface = fetched_surface
                     row_scratch = fetched_scratch
                     row_speckle = fetched_speckle
                     row_gloss = fetched_gloss
 
-            # Use fallback only for calculation, not storage
-            calc_surface = 0.05 if pd.isna(row_surface) else float(row_surface)
+            calc_surface = 0.12 if pd.isna(row_surface) else float(row_surface)
 
             new_grade = compute_grade(
                 float(row["horizontal_ratio"]),
