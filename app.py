@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.6-best-fit-4feature-blend"
+MODEL_VERSION = "v8.7-4feature-final-balance"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -147,10 +147,6 @@ def centering_psa_grade(h: float, v: float) -> float:
         return 7.0
 
 
-def centering_strength_psa(h: float, v: float) -> float:
-    return centering_psa_grade(h, v) / 10.0
-
-
 def remap_corner_for_model(corner: float) -> float:
     c = max(0.0, min(1.0, float(corner)))
     return float(np.clip(np.sqrt(c), 0, 1))
@@ -186,13 +182,13 @@ def edge_grade_band(edge: float) -> float:
 
 def surface_grade_band(surface: float) -> float:
     s = max(0.0, min(1.0, float(surface)))
-    if s <= 0.09:
+    if s <= 0.08:
         return 10.0
     elif s <= 0.10:
         return 9.0
-    elif s <= 0.12:
+    elif s <= 0.13:
         return 8.0
-    elif s <= 0.14:
+    elif s <= 0.16:
         return 7.0
     else:
         return 6.0
@@ -216,13 +212,20 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    # Best-fit simplified 4-feature blend from latest dataset
     candidate = (
-        0.15 * centering_cap +
-        0.10 * corner_cap +
-        0.10 * edge_cap +
-        0.65 * surface_cap
+        0.30 * centering_cap +
+        0.20 * corner_cap +
+        0.20 * edge_cap +
+        0.30 * surface_cap
     )
+
+    # Surface moderation for strong structural cards
+    if (
+        centering_cap >= 9 and
+        corner_cap >= 8 and
+        surface_cap <= 7
+    ):
+        candidate += 0.4
 
     overall = round(max(1.0, min(10.0, candidate)), 2)
 
