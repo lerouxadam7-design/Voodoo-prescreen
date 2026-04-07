@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.8-locked-final"
+MODEL_VERSION = "v9.0-locked-nonlinear-final"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -244,6 +244,14 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     ):
         candidate -= 0.6
 
+    # Final non-linear scaling to expand range
+    if candidate >= 8.5:
+        candidate += 0.7
+    elif candidate >= 8.0:
+        candidate += 0.4
+    elif candidate <= 6.5:
+        candidate -= 0.5
+
     overall = round(max(1.0, min(10.0, candidate)), 2)
 
     cap_values = {
@@ -310,7 +318,7 @@ def decision_panel(
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
 
-    st.markdown("### 4-Feature Blend")
+    st.markdown("### Locked 4-Feature Blend")
     st.write("Blended Grade:", caps["candidate_grade"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
