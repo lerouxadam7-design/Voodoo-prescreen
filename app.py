@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.0-locked-nonlinear-final"
+MODEL_VERSION = "v9.1-fitted-formula"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -206,53 +206,37 @@ def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
 
+def compute_fitted_grade(
+    horizontal_ratio: float,
+    vertical_ratio: float,
+    corner_score: float,
+    edge_score: float,
+    surface_score: float
+) -> float:
+    v_good = 1.0 - float(vertical_ratio)
+    corner_bad = float(corner_score)
+    edge_bad = float(edge_score)
+    surface_bad = float(surface_score)
+
+    grade = (
+        8.35
+        + 0.25 * v_good
+        - 0.47 * corner_bad
+        - 0.94 * edge_bad
+        + 38.67 * surface_bad
+        - 350.94 * (surface_bad ** 2)
+    )
+
+    return round(max(1.0, min(10.0, grade)), 2)
+
+
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    # Locked 4-feature balance
-    candidate = (
-        0.28 * centering_cap +
-        0.22 * corner_cap +
-        0.22 * edge_cap +
-        0.28 * surface_cap
-    )
-
-    # High-end boost
-    if (
-        centering_cap >= 9 and
-        corner_cap >= 9 and
-        edge_cap >= 9 and
-        surface_cap >= 9
-    ):
-        candidate += 0.6
-
-    # Surface moderation for strong structural cards
-    if (
-        centering_cap >= 9 and
-        corner_cap >= 8 and
-        surface_cap <= 7
-    ):
-        candidate += 0.4
-
-    # Weak card suppression
-    if (
-        surface_cap <= 7 and
-        corner_cap <= 7
-    ):
-        candidate -= 0.6
-
-    # Final non-linear scaling to expand range
-    if candidate >= 8.5:
-        candidate += 0.7
-    elif candidate >= 8.0:
-        candidate += 0.4
-    elif candidate <= 6.5:
-        candidate -= 0.5
-
-    overall = round(max(1.0, min(10.0, candidate)), 2)
+    overall = compute_fitted_grade(h, v, corner, edge, surface)
 
     cap_values = {
         "Centering": centering_cap,
@@ -264,7 +248,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
     return {
         "overall_grade": overall,
-        "candidate_grade": round(candidate, 2),
+        "candidate_grade": overall,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -279,7 +263,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    return compute_psa_caps(h, v, edge, corner, surface)["overall_grade"]
+    return compute_fitted_grade(h, v, corner, edge, surface)
 
 
 def decision_panel(
@@ -318,8 +302,8 @@ def decision_panel(
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
 
-    st.markdown("### Locked 4-Feature Blend")
-    st.write("Blended Grade:", caps["candidate_grade"])
+    st.markdown("### Fitted Formula Output")
+    st.write("Predicted Grade:", caps["candidate_grade"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -536,7 +520,6 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
-    # Front centering + edge
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -570,7 +553,6 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
-    # Corners
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -611,7 +593,6 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
-    # Surface
     surface = None
     scratch_score = None
     speckle_score = None
@@ -651,7 +632,6 @@ if st.button("Run Analysis"):
     st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
     st.write("DEBUG surface final:", surface)
 
-    # Final grade
     grade = compute_grade(h, v, edge, corner, float(surface))
 
     st.markdown("## Grade")
@@ -675,7 +655,6 @@ if st.button("Run Analysis"):
     if gloss_score is not None:
         st.write("Gloss Score:", round(float(gloss_score), 4))
 
-    # Save images
     card_id = str(uuid.uuid4())
     front_name = f"{card_id}_front.jpg"
     back_name = f"{card_id}_back.jpg"
