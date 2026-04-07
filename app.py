@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.1-fitted-formula"
+MODEL_VERSION = "v9.2-confidence-layer"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -206,6 +206,10 @@ def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
 
+# ============================================================
+# FITTED GRADE MODEL
+# ============================================================
+
 def compute_fitted_grade(
     horizontal_ratio: float,
     vertical_ratio: float,
@@ -266,13 +270,120 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
     return compute_fitted_grade(h, v, corner, edge, surface)
 
 
+# ============================================================
+# CONFIDENCE LAYER
+# ============================================================
+
+def band_distance_centering(h: float, v: float) -> float:
+    worst = min(float(h), float(v))
+    thresholds = [0.70, 0.80, 0.90]
+    return min(abs(worst - t) for t in thresholds)
+
+
+def band_distance_corner(corner: float) -> float:
+    c = remap_corner_for_model(corner)
+    thresholds = [0.38, 0.46, 0.51, 0.58]
+    return min(abs(c - t) for t in thresholds)
+
+
+def band_distance_edge(edge: float) -> float:
+    e = max(0.0, min(1.0, float(edge)))
+    thresholds = [0.006, 0.012, 0.020, 0.032]
+    return min(abs(e - t) for t in thresholds)
+
+
+def band_distance_surface(surface: float) -> float:
+    s = max(0.0, min(1.0, float(surface)))
+    thresholds = [0.08, 0.10, 0.13, 0.16]
+    return min(abs(s - t) for t in thresholds)
+
+
+def compute_confidence(
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float,
+    used_surface_fallback: bool = False,
+    corner_count: int = 0
+) -> dict:
+    centering_band = centering_psa_grade(h, v)
+    corner_band = corner_grade_band(corner)
+    edge_band = edge_grade_band(edge)
+    surface_band = surface_grade_band(surface)
+
+    bands = [centering_band, corner_band, edge_band, surface_band]
+
+    # 1. Agreement
+    spread = max(bands) - min(bands)
+    agreement_score = max(0.0, 1.0 - (spread / 4.0))
+
+    # 2. Distance from thresholds
+    d_center = band_distance_centering(h, v)
+    d_corner = band_distance_corner(corner)
+    d_edge = band_distance_edge(edge)
+    d_surface = band_distance_surface(surface)
+
+    center_conf = min(1.0, d_center / 0.05)
+    corner_conf = min(1.0, d_corner / 0.08)
+    edge_conf = min(1.0, d_edge / 0.01)
+    surface_conf = min(1.0, d_surface / 0.03)
+
+    threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
+
+    # 3. Data quality
+    data_score = 1.0
+    if used_surface_fallback:
+        data_score -= 0.20
+    if corner_count < 2:
+        data_score -= 0.25
+    elif corner_count == 2:
+        data_score -= 0.05
+
+    data_score = max(0.0, min(1.0, data_score))
+
+    # Final blend
+    confidence_raw = (
+        0.45 * agreement_score +
+        0.40 * threshold_score +
+        0.15 * data_score
+    )
+
+    confidence_raw = max(0.0, min(1.0, confidence_raw))
+
+    if confidence_raw >= 0.80:
+        label = "High"
+    elif confidence_raw >= 0.60:
+        label = "Moderate"
+    else:
+        label = "Low"
+
+    return {
+        "confidence_score": round(confidence_raw, 3),
+        "confidence_label": label,
+        "agreement_score": round(agreement_score, 3),
+        "threshold_score": round(threshold_score, 3),
+        "data_score": round(data_score, 3),
+        "band_spread": round(spread, 2),
+        "centering_band": centering_band,
+        "corner_band": corner_band,
+        "edge_band": edge_band,
+        "surface_band": surface_band,
+    }
+
+
+# ============================================================
+# UI HELPERS
+# ============================================================
+
 def decision_panel(
     grade: float,
     h: float,
     v: float,
     edge: float,
     corner: float,
-    surface: float
+    surface: float,
+    confidence: dict
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
@@ -285,11 +396,9 @@ def decision_panel(
     else:
         st.error("DO NOT SUBMIT")
 
-    confidence = float(np.clip(1 - abs(h - v), 0, 1))
-    risk = "Low" if confidence > 0.85 else "Moderate" if confidence > 0.65 else "High"
-
-    st.write("Confidence:", round(confidence, 2))
-    st.write("Risk Level:", risk)
+    st.write("Confidence Score:", confidence["confidence_score"])
+    st.write("Confidence Level:", confidence["confidence_label"])
+    st.write("Risk Level:", "Low" if confidence["confidence_score"] >= 0.80 else "Moderate" if confidence["confidence_score"] >= 0.60 else "High")
     st.write("Limiting Feature:", caps["limiter"])
 
     st.markdown("### Centering")
@@ -301,6 +410,12 @@ def decision_panel(
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
+
+    st.markdown("### Confidence Breakdown")
+    st.write("Agreement Score:", confidence["agreement_score"])
+    st.write("Threshold Score:", confidence["threshold_score"])
+    st.write("Data Quality Score:", confidence["data_score"])
+    st.write("Band Spread:", confidence["band_spread"])
 
     st.markdown("### Fitted Formula Output")
     st.write("Predicted Grade:", caps["candidate_grade"])
@@ -598,6 +713,7 @@ if st.button("Run Analysis"):
     speckle_score = None
     gloss_score = None
     surface_data = None
+    used_surface_fallback = False
 
     try:
         sr = requests.post(
@@ -627,6 +743,7 @@ if st.button("Run Analysis"):
 
     if surface is None:
         surface = 0.12
+        used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
     st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
@@ -634,10 +751,20 @@ if st.button("Run Analysis"):
 
     grade = compute_grade(h, v, edge, corner, float(surface))
 
+    confidence = compute_confidence(
+        h=h,
+        v=v,
+        edge=edge,
+        corner=corner,
+        surface=float(surface),
+        used_surface_fallback=used_surface_fallback,
+        corner_count=len(corner_scores),
+    )
+
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
-    decision_panel(grade, h, v, edge, corner, float(surface))
+    decision_panel(grade, h, v, edge, corner, float(surface), confidence)
 
     st.markdown("### Raw Feature Values")
     st.write("Horizontal Ratio:", round(h, 4))
@@ -697,6 +824,12 @@ if st.button("Run Analysis"):
         "speckle_score": json_safe(speckle_score),
         "gloss_score": json_safe(gloss_score),
         "calibrated_grade": json_safe(grade),
+        "confidence_score": json_safe(confidence["confidence_score"]),
+        "confidence_label": json_safe(confidence["confidence_label"]),
+        "agreement_score": json_safe(confidence["agreement_score"]),
+        "threshold_score": json_safe(confidence["threshold_score"]),
+        "data_score": json_safe(confidence["data_score"]),
+        "band_spread": json_safe(confidence["band_spread"]),
         "front_image_url": json_safe(front_url),
         "back_image_url": json_safe(back_url),
         "submitted_by": user_email,
@@ -711,6 +844,7 @@ if st.button("Run Analysis"):
     }
 
     st.write("DEBUG payload surface_score:", payload["surface_score"])
+    st.write("DEBUG payload confidence_score:", payload["confidence_score"])
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -773,7 +907,11 @@ if user_role == "admin":
                     row_speckle = fetched_speckle
                     row_gloss = fetched_gloss
 
-            calc_surface = 0.12 if pd.isna(row_surface) else float(row_surface)
+            used_surface_fallback = False
+            calc_surface = row_surface
+            if pd.isna(calc_surface):
+                calc_surface = 0.12
+                used_surface_fallback = True
 
             new_grade = compute_grade(
                 float(row["horizontal_ratio"]),
@@ -781,6 +919,16 @@ if user_role == "admin":
                 float(row["edge_score"]),
                 float(row["corner_score"]),
                 float(calc_surface),
+            )
+
+            confidence = compute_confidence(
+                h=float(row["horizontal_ratio"]),
+                v=float(row["vertical_ratio"]),
+                edge=float(row["edge_score"]),
+                corner=float(row["corner_score"]),
+                surface=float(calc_surface),
+                used_surface_fallback=used_surface_fallback,
+                corner_count=2,
             )
 
             new_card_id = str(uuid.uuid4())
@@ -801,6 +949,12 @@ if user_role == "admin":
                 "speckle_score": json_safe(row_speckle),
                 "gloss_score": json_safe(row_gloss),
                 "calibrated_grade": json_safe(new_grade),
+                "confidence_score": json_safe(confidence["confidence_score"]),
+                "confidence_label": json_safe(confidence["confidence_label"]),
+                "agreement_score": json_safe(confidence["agreement_score"]),
+                "threshold_score": json_safe(confidence["threshold_score"]),
+                "data_score": json_safe(confidence["data_score"]),
+                "band_spread": json_safe(confidence["band_spread"]),
                 "front_image_url": json_safe(row.get("front_image_url")),
                 "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
@@ -816,7 +970,7 @@ if user_role == "admin":
 
             status_box.write(
                 f"Processed {idx}/{total_rows} | source_card_id={row.get('card_id')} | "
-                f"new_card_id={new_card_id} | surface={json_safe(row_surface)} | grade={new_grade}"
+                f"new_card_id={new_card_id} | grade={new_grade} | confidence={confidence['confidence_score']} ({confidence['confidence_label']})"
             )
             progress.progress(idx / max(total_rows, 1))
 
