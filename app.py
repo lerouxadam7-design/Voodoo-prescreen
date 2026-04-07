@@ -76,7 +76,8 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v8.3-surface-persistence-fixed"
+MODEL_VERSION = "v8.4-rescore-surface-backfill"
+st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -95,8 +96,6 @@ upload_headers = {
     "apikey": SUPABASE_KEY,
     "Content-Type": "image/jpeg",
 }
-
-st.write("RUNNING VERSION:", MODEL_VERSION)
 
 # ============================================================
 # HELPERS
@@ -364,6 +363,38 @@ def render_overlay_image(
     </div>
     """
     components.html(html, height=height + 10, width=width + 10, scrolling=False)
+
+
+def backfill_surface_from_url(front_image_url: str):
+    if not front_image_url:
+        return None, None, None, None
+
+    try:
+        img_resp = requests.get(front_image_url, timeout=60)
+        if img_resp.status_code != 200:
+            return None, None, None, None
+
+        sr = requests.post(
+            f"{API_BASE}/analyze_surface",
+            files={"file": img_resp.content},
+            timeout=60,
+        )
+
+        if sr.status_code != 200:
+            return None, None, None, None
+
+        surface_data = sr.json()
+        if "error" in surface_data:
+            return None, None, None, None
+
+        return (
+            surface_data.get("surface_score"),
+            surface_data.get("scratch_score"),
+            surface_data.get("speckle_score"),
+            surface_data.get("gloss_score"),
+        )
+    except Exception:
+        return None, None, None, None
 
 # ============================================================
 # AUTHORIZATION
@@ -731,14 +762,33 @@ if user_role == "admin":
     st.markdown("## Model Maintenance")
 
     if st.button("Re-Score All Cards"):
-        for _, row in df.iterrows():
+        progress = st.progress(0)
+        status_box = st.empty()
+        total_rows = len(df)
+
+        for idx, (_, row) in enumerate(df.iterrows(), start=1):
             if pd.isna(row.get("horizontal_ratio")) or pd.isna(row.get("vertical_ratio")):
+                progress.progress(idx / max(total_rows, 1))
                 continue
 
-            # IMPORTANT:
-            # Keep stored surface as-is.
-            # Only use fallback for grade calculation when surface is missing.
             row_surface = row.get("surface_score")
+            row_scratch = row.get("scratch_score")
+            row_speckle = row.get("speckle_score")
+            row_gloss = row.get("gloss_score")
+
+            # Backfill surface fields if missing and front image exists
+            if pd.isna(row_surface):
+                fetched_surface, fetched_scratch, fetched_speckle, fetched_gloss = backfill_surface_from_url(
+                    row.get("front_image_url")
+                )
+
+                if fetched_surface is not None:
+                    row_surface = fetched_surface
+                    row_scratch = fetched_scratch
+                    row_speckle = fetched_speckle
+                    row_gloss = fetched_gloss
+
+            # Use fallback only for grade calculation, not for saving
             calc_surface = 0.05 if pd.isna(row_surface) else float(row_surface)
 
             new_grade = compute_grade(
@@ -746,31 +796,34 @@ if user_role == "admin":
                 float(row["vertical_ratio"]),
                 float(row["edge_score"]),
                 float(row["corner_score"]),
-                calc_surface,
+                float(calc_surface),
             )
 
-            new_data = {
-                "card_id": json_safe(row.get("card_id")),
+            # PATCH existing row by card_id instead of POSTing a new row
+            patch_url = f"{TABLE_URL}?card_id=eq.{row['card_id']}"
+
+            update_data = {
                 "model_version": MODEL_VERSION,
-                "manufacturer": json_safe(row.get("manufacturer")),
-                "stock_type": json_safe(row.get("stock_type")),
-                "psa_is_graded": json_safe(row.get("psa_is_graded")),
-                "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
-                "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
-                "vertical_ratio": json_safe(row.get("vertical_ratio")),
-                "edge_score": json_safe(row.get("edge_score")),
-                "corner_score": json_safe(row.get("corner_score")),
                 "surface_score": json_safe(row_surface),
-                "scratch_score": json_safe(row.get("scratch_score")),
-                "speckle_score": json_safe(row.get("speckle_score")),
-                "gloss_score": json_safe(row.get("gloss_score")),
+                "scratch_score": json_safe(row_scratch),
+                "speckle_score": json_safe(row_speckle),
+                "gloss_score": json_safe(row_gloss),
                 "calibrated_grade": json_safe(new_grade),
-                "front_image_url": json_safe(row.get("front_image_url")),
-                "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
                 "created_at": str(datetime.now())
             }
 
-            requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
+            try:
+                patch_resp = requests.patch(patch_url, json=update_data, headers=headers, timeout=30)
+                if patch_resp.status_code not in [200, 204]:
+                    status_box.warning(f"Patch failed for card_id {row['card_id']}: {patch_resp.text}")
+            except Exception as e:
+                status_box.warning(f"Patch exception for card_id {row['card_id']}: {e}")
 
-        st.success("Re-scored under locked model.")
+            status_box.write(
+                f"Processed {idx}/{total_rows} | card_id={row['card_id']} | "
+                f"surface={json_safe(row_surface)} | grade={new_grade}"
+            )
+            progress.progress(idx / max(total_rows, 1))
+
+        st.success("Re-scored and backfilled surface where possible.")
