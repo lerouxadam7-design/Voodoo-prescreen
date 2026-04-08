@@ -115,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.1-confidence-softened"
+MODEL_VERSION = "v9.8-grade-shaping"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -294,13 +294,81 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
+def compute_grade_shape_adjustment(
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float
+) -> dict:
+    worst_center = min(float(h), float(v))
+    corner_good = remap_corner_for_model(corner)
+    edge_bad = float(edge)
+    surface_bad = float(surface)
+
+    bonus = 0.0
+    penalty = 0.0
+    reasons = []
+
+    # ---- top-end bonus: help likely gem / near-gem cards slightly
+    if (
+        surface_bad <= 0.095
+        and edge_bad <= 0.012
+        and corner_good >= 0.51
+        and worst_center >= 0.82
+    ):
+        bonus += 0.12
+        reasons.append("clean_card_bonus")
+
+    if (
+        surface_bad <= 0.085
+        and edge_bad <= 0.008
+        and corner_good >= 0.56
+        and worst_center >= 0.88
+    ):
+        bonus += 0.08
+        reasons.append("elite_card_bonus")
+
+    # ---- low-end penalty: pull down clearly rough cards slightly
+    if surface_bad >= 0.145 and edge_bad >= 0.022:
+        penalty += 0.12
+        reasons.append("rough_combo_penalty")
+
+    if surface_bad >= 0.16 or edge_bad >= 0.032 or corner_good < 0.38:
+        penalty += 0.10
+        reasons.append("major_flaw_penalty")
+
+    if worst_center < 0.72 and surface_bad >= 0.14:
+        penalty += 0.08
+        reasons.append("weak_center_surface_penalty")
+
+    net = bonus - penalty
+    net = max(-0.25, min(0.20, net))
+
+    return {
+        "grade_shape_bonus": round(bonus, 3),
+        "grade_shape_penalty": round(penalty, 3),
+        "grade_shape_adjustment": round(net, 3),
+        "grade_shape_reasons": reasons,
+    }
+
+
+def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
+    base_grade = compute_fitted_grade(h, v, corner, edge, surface)
+    shape = compute_grade_shape_adjustment(h, v, edge, corner, surface)
+    final_grade = base_grade + shape["grade_shape_adjustment"]
+    return round(max(1.0, min(10.0, final_grade)), 2)
+
+
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    overall = compute_fitted_grade(h, v, corner, edge, surface)
+    base_grade = compute_fitted_grade(h, v, corner, edge, surface)
+    shaped = compute_grade_shape_adjustment(h, v, edge, corner, surface)
+    overall = round(max(1.0, min(10.0, base_grade + shaped["grade_shape_adjustment"])), 2)
 
     cap_values = {
         "Centering": centering_cap,
@@ -313,6 +381,11 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": overall,
         "candidate_grade": overall,
+        "base_fitted_grade": round(base_grade, 2),
+        "grade_shape_bonus": shaped["grade_shape_bonus"],
+        "grade_shape_penalty": shaped["grade_shape_penalty"],
+        "grade_shape_adjustment": shaped["grade_shape_adjustment"],
+        "grade_shape_reasons": shaped["grade_shape_reasons"],
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -326,12 +399,8 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     }
 
 
-def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    return compute_fitted_grade(h, v, corner, edge, surface)
-
-
 # ============================================================
-# CONFIDENCE LAYER (V9.7.1 SOFTENED)
+# CONFIDENCE LAYER (KEEP V9.7.1)
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -432,7 +501,7 @@ def compute_confidence(
 
 
 # ============================================================
-# SUBMIT RECOMMENDATION RULES (UNCHANGED FROM V9.7)
+# SUBMIT RECOMMENDATION RULES (KEEP CURRENT)
 # ============================================================
 
 def compute_submit_probability(
@@ -679,6 +748,11 @@ def decision_panel_admin(
     st.write("Band Spread:", confidence["band_spread"])
 
     st.markdown("### Fitted Formula Output")
+    st.write("Base Fitted Grade:", caps["base_fitted_grade"])
+    st.write("Shape Bonus:", caps["grade_shape_bonus"])
+    st.write("Shape Penalty:", caps["grade_shape_penalty"])
+    st.write("Shape Adjustment:", caps["grade_shape_adjustment"])
+    st.write("Shape Reasons:", ", ".join(caps["grade_shape_reasons"]) if caps["grade_shape_reasons"] else "none")
     st.write("Predicted Grade:", caps["candidate_grade"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
@@ -1053,6 +1127,8 @@ if st.button("Run Analysis"):
     st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     grade = compute_grade(h, v, edge, corner, float(surface))
+    shape = compute_grade_shape_adjustment(h, v, edge, corner, float(surface))
+    base_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
 
     confidence = compute_confidence(
         h=h,
@@ -1100,6 +1176,11 @@ if st.button("Run Analysis"):
         "gloss_score": gloss_score,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
+        "base_fitted_grade": base_grade,
+        "grade_shape_bonus": shape["grade_shape_bonus"],
+        "grade_shape_penalty": shape["grade_shape_penalty"],
+        "grade_shape_adjustment": shape["grade_shape_adjustment"],
+        "grade_shape_reasons": shape["grade_shape_reasons"],
         "grade": grade,
         "confidence": confidence,
         "submit": submit,
@@ -1188,6 +1269,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
+        st.write("Base Fitted Grade:", round(float(result["base_fitted_grade"]), 2))
+        st.write("Grade Shape Bonus:", result["grade_shape_bonus"])
+        st.write("Grade Shape Penalty:", result["grade_shape_penalty"])
+        st.write("Grade Shape Adjustment:", result["grade_shape_adjustment"])
+        st.write("Grade Shape Reasons:", ", ".join(result["grade_shape_reasons"]) if result["grade_shape_reasons"] else "none")
         if result["scratch_score"] is not None:
             st.write("Scratch Score:", round(float(result["scratch_score"]), 4))
         if result["speckle_score"] is not None:
@@ -1283,6 +1369,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
                 st.write("DEBUG payload submit_percent:", payload["submit_percent"])
                 st.write("DEBUG payload submit_label:", payload["submit_label"])
+                st.write("DEBUG payload grade:", payload["calibrated_grade"])
+                st.write("DEBUG grade shape reasons:", result["grade_shape_reasons"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
