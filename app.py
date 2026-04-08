@@ -99,6 +99,13 @@ tbody tr td {
     color: #C9A44D;
     margin-bottom: 8px;
 }
+.section-box {
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 12px;
+    background: rgba(255,255,255,0.04);
+    margin-bottom: 14px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.5-player-guide-submit-rules"
+MODEL_VERSION = "v9.6-player-edit-saveflow"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -134,6 +141,21 @@ if "upload_key" not in st.session_state:
 
 if "last_save_success" not in st.session_state:
     st.session_state.last_save_success = False
+
+if "analysis_complete" not in st.session_state:
+    st.session_state.analysis_complete = False
+
+if "analysis_payload" not in st.session_state:
+    st.session_state.analysis_payload = None
+
+if "analysis_front_bytes" not in st.session_state:
+    st.session_state.analysis_front_bytes = None
+
+if "analysis_back_bytes" not in st.session_state:
+    st.session_state.analysis_back_bytes = None
+
+if "player_name_edit" not in st.session_state:
+    st.session_state.player_name_edit = ""
 
 # ============================================================
 # HELPERS
@@ -444,22 +466,13 @@ def compute_submit_probability(
 # ============================================================
 
 def detect_player_name(front_bytes: bytes) -> dict:
-    """
-    Tries to call a backend metadata endpoint.
-    Gracefully fails if the endpoint is not implemented or unavailable.
-    Expected response shape:
-    {
-      "player_name": "Ken Griffey Jr.",
-      "player_name_confidence": 0.91,
-      "player_name_source": "vision"
-    }
-    """
     try:
         resp = requests.post(
             f"{API_BASE}/extract_card_metadata",
-            files={"file": front_bytes},
+            files={"file": ("front.jpg", front_bytes, "image/jpeg")},
             timeout=60,
         )
+
         if resp.status_code != 200:
             return {
                 "player_name": None,
@@ -478,7 +491,7 @@ def detect_player_name(front_bytes: bytes) -> dict:
         return {
             "player_name": data.get("player_name"),
             "player_name_confidence": data.get("player_name_confidence"),
-            "player_name_source": data.get("player_name_source", "api"),
+            "player_name_source": data.get("player_name_source", "vision"),
         }
     except Exception:
         return {
@@ -590,7 +603,7 @@ def backfill_surface_from_url(front_image_url: str):
 
         sr = requests.post(
             f"{API_BASE}/analyze_surface",
-            files={"file": img_resp.content},
+            files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
             timeout=60,
         )
 
@@ -712,6 +725,15 @@ def decision_panel_user(
     st.write("Surface:", surface_subgrade(surface))
 
 
+def reset_analysis_state():
+    st.session_state.analysis_complete = False
+    st.session_state.analysis_payload = None
+    st.session_state.analysis_front_bytes = None
+    st.session_state.analysis_back_bytes = None
+    st.session_state.player_name_edit = ""
+    st.session_state.last_save_success = False
+
+
 # ============================================================
 # ACCESS + USER GUIDE
 # ============================================================
@@ -771,7 +793,7 @@ clear_col, _ = st.columns([1, 3])
 with clear_col:
     if st.button("🧹 Clear Images"):
         st.session_state.upload_key = str(uuid.uuid4())
-        st.session_state.last_save_success = False
+        reset_analysis_state()
         st.rerun()
 
 st.markdown('<div class="upload-title">Front Image</div>', unsafe_allow_html=True)
@@ -893,9 +915,14 @@ if use_manual_centering:
 
 if st.button("Run Analysis"):
     st.session_state.last_save_success = False
+    reset_analysis_state()
 
     if full_card_front is None:
         st.error("Front image required")
+        st.stop()
+
+    if full_card_back is None:
+        st.error("Back image required")
         st.stop()
 
     if corner1 is None or corner2 is None:
@@ -903,12 +930,13 @@ if st.button("Run Analysis"):
         st.stop()
 
     front_bytes = full_card_front.getvalue()
+    back_bytes = full_card_back.getvalue()
 
     # ---- front centering + edge
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
-            files={"file": front_bytes},
+            files={"file": ("front.jpg", front_bytes, "image/jpeg")},
             timeout=60,
         )
     except Exception as e:
@@ -950,7 +978,7 @@ if st.button("Run Analysis"):
         try:
             cr = requests.post(
                 f"{API_BASE}/analyze_corner",
-                files={"file": c.getvalue()},
+                files={"file": ("corner.jpg", c.getvalue(), "image/jpeg")},
                 timeout=60,
             )
         except Exception as e:
@@ -990,7 +1018,7 @@ if st.button("Run Analysis"):
     try:
         sr = requests.post(
             f"{API_BASE}/analyze_surface",
-            files={"file": front_bytes},
+            files={"file": ("front.jpg", front_bytes, "image/jpeg")},
             timeout=60,
         )
     except Exception as e:
@@ -1024,23 +1052,7 @@ if st.button("Run Analysis"):
     detected_player_confidence = player_meta.get("player_name_confidence")
     detected_player_source = player_meta.get("player_name_source")
 
-    st.markdown("### Player Name")
-    if detected_player_name:
-        st.write(
-            f"Detected player: {detected_player_name}"
-            + (f" ({round(float(detected_player_confidence) * 100, 1)}%)" if detected_player_confidence is not None else "")
-        )
-    else:
-        st.write("Detected player: Not found")
-
-    player_name_override = st.text_input(
-        "Player Name (edit or confirm before save)",
-        value=detected_player_name if detected_player_name else ""
-    )
-
-    final_player_name = player_name_override.strip() if player_name_override else None
-    final_player_name_confidence = detected_player_confidence if detected_player_name else None
-    final_player_name_source = "manual_override" if final_player_name and final_player_name != detected_player_name else detected_player_source
+    st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     # ---- grade + confidence + submit
     grade = compute_grade(h, v, edge, corner, float(surface))
@@ -1062,7 +1074,6 @@ if st.button("Run Analysis"):
         band_spread=confidence["band_spread"],
     )
 
-    # ---- preview
     preview_img = build_card_preview_with_overlay(
         image_bytes=front_bytes,
         horizontal_ratio=h,
@@ -1070,128 +1081,220 @@ if st.button("Run Analysis"):
         max_width=320
     )
 
-    if preview_img is not None:
+    st.session_state.analysis_payload = {
+        "manufacturer": manufacturer,
+        "stock_type": stock_type,
+        "psa_is_graded": psa_is_graded,
+        "psa_actual_grade": psa_actual_grade,
+        "use_manual_centering": use_manual_centering,
+        "manual_left": manual_left,
+        "manual_right": manual_right,
+        "manual_top": manual_top,
+        "manual_bottom": manual_bottom,
+        "manual_h_ratio": manual_h_ratio,
+        "manual_v_ratio": manual_v_ratio,
+        "horizontal_ratio": h,
+        "vertical_ratio": v,
+        "edge_score": edge,
+        "corner_score": corner,
+        "surface_score": float(surface),
+        "scratch_score": scratch_score,
+        "speckle_score": speckle_score,
+        "gloss_score": gloss_score,
+        "surface_data": surface_data,
+        "used_surface_fallback": used_surface_fallback,
+        "grade": grade,
+        "confidence": confidence,
+        "submit": submit,
+        "preview_img": preview_img,
+        "detected_player_name": detected_player_name,
+        "detected_player_confidence": detected_player_confidence,
+        "detected_player_source": detected_player_source,
+        "corner_count": len(corner_scores),
+    }
+    st.session_state.analysis_front_bytes = front_bytes
+    st.session_state.analysis_back_bytes = back_bytes
+    st.session_state.analysis_complete = True
+
+# ============================================================
+# RESULTS / SAVE
+# ============================================================
+
+if st.session_state.analysis_complete and st.session_state.analysis_payload is not None:
+    result = st.session_state.analysis_payload
+
+    detected_player_name = result["detected_player_name"]
+    detected_player_confidence = result["detected_player_confidence"]
+    detected_player_source = result["detected_player_source"]
+
+    st.markdown("### Player Name")
+    if detected_player_name:
+        msg = f"Detected player: {detected_player_name}"
+        if detected_player_confidence is not None:
+            msg += f" ({round(float(detected_player_confidence) * 100, 1)}%)"
+        st.write(msg)
+    else:
+        st.write("Detected player: Not found")
+
+    st.text_input(
+        "Player Name (edit or confirm before save)",
+        key="player_name_edit"
+    )
+
+    final_player_name = st.session_state.player_name_edit.strip() if st.session_state.player_name_edit else None
+    final_player_name_confidence = detected_player_confidence if detected_player_name else None
+
+    if final_player_name and final_player_name != detected_player_name:
+        final_player_name_source = "manual_override"
+    else:
+        final_player_name_source = detected_player_source
+
+    if result["preview_img"] is not None:
         st.markdown("### Card Preview")
         st.markdown('<div class="preview-card">', unsafe_allow_html=True)
-        st.image(preview_img, caption="Preview with centering overlay lines", use_container_width=False)
+        st.image(result["preview_img"], caption="Preview with centering overlay lines", use_container_width=False)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- results
     st.markdown("## Grade")
-    st.markdown(f"### {grade}")
+    st.markdown(f"### {result['grade']}")
 
     if user_role == "admin":
-        decision_panel_admin(grade, h, v, edge, corner, float(surface), confidence, submit)
+        decision_panel_admin(
+            result["grade"],
+            result["horizontal_ratio"],
+            result["vertical_ratio"],
+            result["edge_score"],
+            result["corner_score"],
+            result["surface_score"],
+            result["confidence"],
+            result["submit"],
+        )
     else:
-        decision_panel_user(grade, h, v, corner, edge, float(surface), confidence, submit)
+        decision_panel_user(
+            result["grade"],
+            result["horizontal_ratio"],
+            result["vertical_ratio"],
+            result["corner_score"],
+            result["edge_score"],
+            result["surface_score"],
+            result["confidence"],
+            result["submit"],
+        )
 
     if user_role == "admin":
         st.markdown("### Raw Feature Values")
-        st.write("Horizontal Ratio:", round(h, 4))
-        st.write("Vertical Ratio:", round(v, 4))
-        st.write("Horizontal Centering:", ratio_to_psa_centering(h))
-        st.write("Vertical Centering:", ratio_to_psa_centering(v))
-        st.write("Corner Score:", round(corner, 4))
-        st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
-        st.write("Edge Score:", round(edge, 4))
-        st.write("Surface Score:", round(float(surface), 4))
-        if scratch_score is not None:
-            st.write("Scratch Score:", round(float(scratch_score), 4))
-        if speckle_score is not None:
-            st.write("Speckle Score:", round(float(speckle_score), 4))
-        if gloss_score is not None:
-            st.write("Gloss Score:", round(float(gloss_score), 4))
+        st.write("Horizontal Ratio:", round(result["horizontal_ratio"], 4))
+        st.write("Vertical Ratio:", round(result["vertical_ratio"], 4))
+        st.write("Horizontal Centering:", ratio_to_psa_centering(result["horizontal_ratio"]))
+        st.write("Vertical Centering:", ratio_to_psa_centering(result["vertical_ratio"]))
+        st.write("Corner Score:", round(result["corner_score"], 4))
+        st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
+        st.write("Edge Score:", round(result["edge_score"], 4))
+        st.write("Surface Score:", round(float(result["surface_score"]), 4))
+        if result["scratch_score"] is not None:
+            st.write("Scratch Score:", round(float(result["scratch_score"]), 4))
+        if result["speckle_score"] is not None:
+            st.write("Speckle Score:", round(float(result["speckle_score"]), 4))
+        if result["gloss_score"] is not None:
+            st.write("Gloss Score:", round(float(result["gloss_score"]), 4))
 
-    # ---- upload images
-    card_id = str(uuid.uuid4())
-    front_name = f"{card_id}_front.jpg"
-    back_name = f"{card_id}_back.jpg"
+    if st.button("Save Submission"):
+        front_bytes = st.session_state.analysis_front_bytes
+        back_bytes = st.session_state.analysis_back_bytes
 
-    front_upload = requests.post(
-        f"{SUPABASE_URL}/storage/v1/object/card-images/{front_name}",
-        headers=upload_headers,
-        data=front_bytes,
-        timeout=60,
-    )
-    if front_upload.status_code not in [200, 201]:
-        st.error(f"Front upload failed: {front_upload.text}")
+        if front_bytes is None:
+            st.error("Missing analyzed front image bytes.")
+            st.stop()
 
-    if full_card_back:
-        back_upload = requests.post(
-            f"{SUPABASE_URL}/storage/v1/object/card-images/{back_name}",
+        card_id = str(uuid.uuid4())
+        front_name = f"{card_id}_front.jpg"
+        back_name = f"{card_id}_back.jpg"
+
+        front_upload = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/card-images/{front_name}",
             headers=upload_headers,
-            data=full_card_back.getvalue(),
+            data=front_bytes,
             timeout=60,
         )
-        if back_upload.status_code not in [200, 201]:
-            st.error(f"Back upload failed: {back_upload.text}")
+        if front_upload.status_code not in [200, 201]:
+            st.error(f"Front upload failed: {front_upload.text}")
+            st.stop()
 
-    front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
-    back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if full_card_back else None
+        if back_bytes is not None:
+            back_upload = requests.post(
+                f"{SUPABASE_URL}/storage/v1/object/card-images/{back_name}",
+                headers=upload_headers,
+                data=back_bytes,
+                timeout=60,
+            )
+            if back_upload.status_code not in [200, 201]:
+                st.error(f"Back upload failed: {back_upload.text}")
+                st.stop()
 
-    # ---- payload
-    payload = {
-        "card_id": card_id,
-        "model_version": MODEL_VERSION,
-        "manufacturer": json_safe(manufacturer),
-        "stock_type": json_safe(stock_type),
-        "psa_is_graded": json_safe(psa_is_graded),
-        "psa_actual_grade": json_safe(psa_actual_grade),
-        "player_name": json_safe(final_player_name),
-        "player_name_confidence": json_safe(final_player_name_confidence),
-        "player_name_source": json_safe(final_player_name_source),
-        "horizontal_ratio": json_safe(h),
-        "vertical_ratio": json_safe(v),
-        "edge_score": json_safe(edge),
-        "corner_score": json_safe(corner),
-        "surface_score": json_safe(float(surface) if surface is not None else None),
-        "scratch_score": json_safe(scratch_score),
-        "speckle_score": json_safe(speckle_score),
-        "gloss_score": json_safe(gloss_score),
-        "calibrated_grade": json_safe(grade),
-        "confidence_score": json_safe(confidence["confidence_score"]),
-        "confidence_percent": json_safe(confidence["confidence_percent"]),
-        "confidence_label": json_safe(confidence["confidence_label"]),
-        "agreement_score": json_safe(confidence["agreement_score"]),
-        "threshold_score": json_safe(confidence["threshold_score"]),
-        "data_score": json_safe(confidence["data_score"]),
-        "band_spread": json_safe(confidence["band_spread"]),
-        "submit_probability": json_safe(submit["submit_probability"]),
-        "submit_percent": json_safe(submit["submit_percent"]),
-        "submit_label": json_safe(submit["submit_label"]),
-        "front_image_url": json_safe(front_url),
-        "back_image_url": json_safe(back_url),
-        "submitted_by": user_email,
-        "created_at": str(datetime.now()),
-        "manual_centering_used": json_safe(use_manual_centering),
-        "front_left_measurement": json_safe(manual_left if use_manual_centering else None),
-        "front_right_measurement": json_safe(manual_right if use_manual_centering else None),
-        "front_top_measurement": json_safe(manual_top if use_manual_centering else None),
-        "front_bottom_measurement": json_safe(manual_bottom if use_manual_centering else None),
-        "front_horizontal_ratio_manual": json_safe(manual_h_ratio if use_manual_centering else None),
-        "front_vertical_ratio_manual": json_safe(manual_v_ratio if use_manual_centering else None),
-    }
+        front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
+        back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if back_bytes else None
 
-    if user_role == "admin":
-        with st.expander("Debug"):
-            st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
-            st.write("DEBUG surface final:", surface)
-            st.write("DEBUG detected player:", detected_player_name)
-            st.write("DEBUG player source:", detected_player_source)
-            st.write("DEBUG payload player_name:", payload["player_name"])
-            st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
-            st.write("DEBUG payload submit_percent:", payload["submit_percent"])
+        payload = {
+            "card_id": card_id,
+            "model_version": MODEL_VERSION,
+            "manufacturer": json_safe(manufacturer),
+            "stock_type": json_safe(stock_type),
+            "psa_is_graded": json_safe(psa_is_graded),
+            "psa_actual_grade": json_safe(psa_actual_grade),
+            "player_name": json_safe(final_player_name),
+            "player_name_confidence": json_safe(final_player_name_confidence),
+            "player_name_source": json_safe(final_player_name_source),
+            "horizontal_ratio": json_safe(result["horizontal_ratio"]),
+            "vertical_ratio": json_safe(result["vertical_ratio"]),
+            "edge_score": json_safe(result["edge_score"]),
+            "corner_score": json_safe(result["corner_score"]),
+            "surface_score": json_safe(result["surface_score"]),
+            "scratch_score": json_safe(result["scratch_score"]),
+            "speckle_score": json_safe(result["speckle_score"]),
+            "gloss_score": json_safe(result["gloss_score"]),
+            "calibrated_grade": json_safe(result["grade"]),
+            "confidence_score": json_safe(result["confidence"]["confidence_score"]),
+            "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
+            "confidence_label": json_safe(result["confidence"]["confidence_label"]),
+            "agreement_score": json_safe(result["confidence"]["agreement_score"]),
+            "threshold_score": json_safe(result["confidence"]["threshold_score"]),
+            "data_score": json_safe(result["confidence"]["data_score"]),
+            "band_spread": json_safe(result["confidence"]["band_spread"]),
+            "submit_probability": json_safe(result["submit"]["submit_probability"]),
+            "submit_percent": json_safe(result["submit"]["submit_percent"]),
+            "submit_label": json_safe(result["submit"]["submit_label"]),
+            "front_image_url": json_safe(front_url),
+            "back_image_url": json_safe(back_url),
+            "submitted_by": user_email,
+            "created_at": str(datetime.now()),
+            "manual_centering_used": json_safe(result["use_manual_centering"]),
+            "front_left_measurement": json_safe(result["manual_left"] if result["use_manual_centering"] else None),
+            "front_right_measurement": json_safe(result["manual_right"] if result["use_manual_centering"] else None),
+            "front_top_measurement": json_safe(result["manual_top"] if result["use_manual_centering"] else None),
+            "front_bottom_measurement": json_safe(result["manual_bottom"] if result["use_manual_centering"] else None),
+            "front_horizontal_ratio_manual": json_safe(result["manual_h_ratio"] if result["use_manual_centering"] else None),
+            "front_vertical_ratio_manual": json_safe(result["manual_v_ratio"] if result["use_manual_centering"] else None),
+        }
 
-    # ---- save
-    save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
+        if user_role == "admin":
+            with st.expander("Debug"):
+                st.write("DEBUG surface response:", result["surface_data"] if result["surface_data"] is not None else "no surface_data")
+                st.write("DEBUG surface final:", result["surface_score"])
+                st.write("DEBUG detected player:", detected_player_name)
+                st.write("DEBUG player source:", detected_player_source)
+                st.write("DEBUG payload player_name:", payload["player_name"])
+                st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
+                st.write("DEBUG payload submit_percent:", payload["submit_percent"])
 
-    if save_response.status_code in [200, 201]:
-        st.session_state.last_save_success = True
-        st.success("Saved successfully")
-        st.info("Images remain loaded. Use the 'Clear Images' button when you're ready.")
-    else:
-        st.session_state.last_save_success = False
-        st.error(f"Database save failed: {save_response.text}")
+        save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
+
+        if save_response.status_code in [200, 201]:
+            st.session_state.last_save_success = True
+            st.success("Saved successfully")
+            st.info("Images remain loaded. Use the 'Clear Images' button when you're ready.")
+        else:
+            st.session_state.last_save_success = False
+            st.error(f"Database save failed: {save_response.text}")
 
 # ============================================================
 # ADMIN
@@ -1313,6 +1416,13 @@ if user_role == "admin":
                 "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
                 "created_at": str(datetime.now()),
+                "manual_centering_used": json_safe(row.get("manual_centering_used")),
+                "front_left_measurement": json_safe(row.get("front_left_measurement")),
+                "front_right_measurement": json_safe(row.get("front_right_measurement")),
+                "front_top_measurement": json_safe(row.get("front_top_measurement")),
+                "front_bottom_measurement": json_safe(row.get("front_bottom_measurement")),
+                "front_horizontal_ratio_manual": json_safe(row.get("front_horizontal_ratio_manual")),
+                "front_vertical_ratio_manual": json_safe(row.get("front_vertical_ratio_manual")),
             }
 
             try:
