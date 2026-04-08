@@ -76,7 +76,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.2-confidence-layer"
+MODEL_VERSION = "v9.3-confidence-submit-probability"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -314,11 +314,9 @@ def compute_confidence(
 
     bands = [centering_band, corner_band, edge_band, surface_band]
 
-    # 1. Agreement
     spread = max(bands) - min(bands)
     agreement_score = max(0.0, 1.0 - (spread / 4.0))
 
-    # 2. Distance from thresholds
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
@@ -331,7 +329,6 @@ def compute_confidence(
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
-    # 3. Data quality
     data_score = 1.0
     if used_surface_fallback:
         data_score -= 0.20
@@ -342,7 +339,6 @@ def compute_confidence(
 
     data_score = max(0.0, min(1.0, data_score))
 
-    # Final blend
     confidence_raw = (
         0.45 * agreement_score +
         0.40 * threshold_score +
@@ -360,6 +356,7 @@ def compute_confidence(
 
     return {
         "confidence_score": round(confidence_raw, 3),
+        "confidence_percent": round(confidence_raw * 100, 1),
         "confidence_label": label,
         "agreement_score": round(agreement_score, 3),
         "threshold_score": round(threshold_score, 3),
@@ -369,6 +366,61 @@ def compute_confidence(
         "corner_band": corner_band,
         "edge_band": edge_band,
         "surface_band": surface_band,
+    }
+
+
+# ============================================================
+# SUBMIT PROBABILITY MODEL
+# ============================================================
+
+def compute_submit_probability(
+    grade: float,
+    confidence_score: float,
+    surface: float,
+    band_spread: float
+) -> dict:
+    if grade >= 9.2:
+        base = 0.95
+    elif grade >= 8.8:
+        base = 0.85
+    elif grade >= 8.3:
+        base = 0.70
+    elif grade >= 7.8:
+        base = 0.55
+    elif grade >= 7.0:
+        base = 0.35
+    else:
+        base = 0.15
+
+    confidence_adj = (confidence_score - 0.5) * 0.4
+
+    if surface >= 0.14:
+        surface_adj = -0.25
+    elif surface >= 0.12:
+        surface_adj = -0.15
+    elif surface >= 0.10:
+        surface_adj = -0.05
+    else:
+        surface_adj = 0.05
+
+    spread_adj = -0.10 if band_spread >= 2 else 0.0
+
+    probability = base + confidence_adj + surface_adj + spread_adj
+    probability = max(0.0, min(1.0, probability))
+
+    if probability >= 0.85:
+        label = "Strong Submit"
+    elif probability >= 0.65:
+        label = "Submit"
+    elif probability >= 0.45:
+        label = "Borderline"
+    else:
+        label = "Do Not Submit"
+
+    return {
+        "submit_probability": round(probability, 3),
+        "submit_percent": round(probability * 100, 1),
+        "submit_label": label,
     }
 
 
@@ -383,22 +435,33 @@ def decision_panel(
     edge: float,
     corner: float,
     surface: float,
-    confidence: dict
+    confidence: dict,
+    submit: dict
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
-    if grade >= 9.2:
+    if submit["submit_label"] == "Strong Submit":
         st.success("STRONG SUBMIT")
-    elif grade >= 8.5:
+    elif submit["submit_label"] == "Submit":
         st.success("SUBMIT")
-    elif grade >= 7.5:
+    elif submit["submit_label"] == "Borderline":
         st.warning("BORDERLINE")
     else:
         st.error("DO NOT SUBMIT")
 
-    st.write("Confidence Score:", confidence["confidence_score"])
+    st.markdown("### Submission Decision")
+    st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
+    st.write("Recommendation:", submit["submit_label"])
+
+    st.markdown("### Confidence")
+    st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
     st.write("Confidence Level:", confidence["confidence_label"])
-    st.write("Risk Level:", "Low" if confidence["confidence_score"] >= 0.80 else "Moderate" if confidence["confidence_score"] >= 0.60 else "High")
+    st.write(
+        "Risk Level:",
+        "Low" if confidence["confidence_score"] >= 0.80 else
+        "Moderate" if confidence["confidence_score"] >= 0.60 else
+        "High"
+    )
     st.write("Limiting Feature:", caps["limiter"])
 
     st.markdown("### Centering")
@@ -502,6 +565,7 @@ def backfill_surface_from_url(front_image_url: str):
         )
     except Exception:
         return None, None, None, None
+
 
 # ============================================================
 # AUTHORIZATION
@@ -761,10 +825,17 @@ if st.button("Run Analysis"):
         corner_count=len(corner_scores),
     )
 
+    submit = compute_submit_probability(
+        grade=grade,
+        confidence_score=confidence["confidence_score"],
+        surface=float(surface),
+        band_spread=confidence["band_spread"],
+    )
+
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
-    decision_panel(grade, h, v, edge, corner, float(surface), confidence)
+    decision_panel(grade, h, v, edge, corner, float(surface), confidence, submit)
 
     st.markdown("### Raw Feature Values")
     st.write("Horizontal Ratio:", round(h, 4))
@@ -825,11 +896,15 @@ if st.button("Run Analysis"):
         "gloss_score": json_safe(gloss_score),
         "calibrated_grade": json_safe(grade),
         "confidence_score": json_safe(confidence["confidence_score"]),
+        "confidence_percent": json_safe(confidence["confidence_percent"]),
         "confidence_label": json_safe(confidence["confidence_label"]),
         "agreement_score": json_safe(confidence["agreement_score"]),
         "threshold_score": json_safe(confidence["threshold_score"]),
         "data_score": json_safe(confidence["data_score"]),
         "band_spread": json_safe(confidence["band_spread"]),
+        "submit_probability": json_safe(submit["submit_probability"]),
+        "submit_percent": json_safe(submit["submit_percent"]),
+        "submit_label": json_safe(submit["submit_label"]),
         "front_image_url": json_safe(front_url),
         "back_image_url": json_safe(back_url),
         "submitted_by": user_email,
@@ -844,7 +919,8 @@ if st.button("Run Analysis"):
     }
 
     st.write("DEBUG payload surface_score:", payload["surface_score"])
-    st.write("DEBUG payload confidence_score:", payload["confidence_score"])
+    st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
+    st.write("DEBUG payload submit_percent:", payload["submit_percent"])
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -931,6 +1007,13 @@ if user_role == "admin":
                 corner_count=2,
             )
 
+            submit = compute_submit_probability(
+                grade=new_grade,
+                confidence_score=confidence["confidence_score"],
+                surface=float(calc_surface),
+                band_spread=confidence["band_spread"],
+            )
+
             new_card_id = str(uuid.uuid4())
 
             new_data = {
@@ -950,11 +1033,15 @@ if user_role == "admin":
                 "gloss_score": json_safe(row_gloss),
                 "calibrated_grade": json_safe(new_grade),
                 "confidence_score": json_safe(confidence["confidence_score"]),
+                "confidence_percent": json_safe(confidence["confidence_percent"]),
                 "confidence_label": json_safe(confidence["confidence_label"]),
                 "agreement_score": json_safe(confidence["agreement_score"]),
                 "threshold_score": json_safe(confidence["threshold_score"]),
                 "data_score": json_safe(confidence["data_score"]),
                 "band_spread": json_safe(confidence["band_spread"]),
+                "submit_probability": json_safe(submit["submit_probability"]),
+                "submit_percent": json_safe(submit["submit_percent"]),
+                "submit_label": json_safe(submit["submit_label"]),
                 "front_image_url": json_safe(row.get("front_image_url")),
                 "back_image_url": json_safe(row.get("back_image_url")),
                 "submitted_by": user_email,
@@ -970,7 +1057,9 @@ if user_role == "admin":
 
             status_box.write(
                 f"Processed {idx}/{total_rows} | source_card_id={row.get('card_id')} | "
-                f"new_card_id={new_card_id} | grade={new_grade} | confidence={confidence['confidence_score']} ({confidence['confidence_label']})"
+                f"new_card_id={new_card_id} | grade={new_grade} | "
+                f"confidence={confidence['confidence_percent']:.1f}% | "
+                f"submit={submit['submit_percent']:.1f}% ({submit['submit_label']})"
             )
             progress.progress(idx / max(total_rows, 1))
 
