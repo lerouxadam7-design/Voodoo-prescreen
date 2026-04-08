@@ -115,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.6-player-edit-saveflow"
+MODEL_VERSION = "v9.7-confidence-submit-recalibrated"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -331,7 +331,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
 
 
 # ============================================================
-# CONFIDENCE LAYER
+# CONFIDENCE LAYER (RECALIBRATED)
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -375,48 +375,50 @@ def compute_confidence(
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 4.0))
+    agreement_score = max(0.0, 1.0 - (spread / 5.5))
 
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
     d_surface = band_distance_surface(surface)
 
-    center_conf = min(1.0, d_center / 0.05)
-    corner_conf = min(1.0, d_corner / 0.08)
-    edge_conf = min(1.0, d_edge / 0.01)
-    surface_conf = min(1.0, d_surface / 0.03)
+    center_conf = min(1.0, d_center / 0.075)
+    corner_conf = min(1.0, d_corner / 0.12)
+    edge_conf = min(1.0, d_edge / 0.018)
+    surface_conf = min(1.0, d_surface / 0.05)
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
     data_score = 1.0
     if used_surface_fallback:
-        data_score -= 0.20
+        data_score -= 0.12
     if corner_count < 2:
-        data_score -= 0.25
+        data_score -= 0.20
     elif corner_count == 2:
-        data_score -= 0.05
+        data_score -= 0.03
 
     data_score = max(0.0, min(1.0, data_score))
 
     confidence_raw = (
-        0.45 * agreement_score +
-        0.40 * threshold_score +
-        0.15 * data_score
+        0.50 * agreement_score +
+        0.30 * threshold_score +
+        0.20 * data_score
     )
 
     confidence_raw = max(0.0, min(1.0, confidence_raw))
 
-    if confidence_raw >= 0.80:
+    confidence_percent = round(confidence_raw * 100.0, 1)
+
+    if confidence_percent >= 75:
         label = "High"
-    elif confidence_raw >= 0.60:
+    elif confidence_percent >= 55:
         label = "Moderate"
     else:
         label = "Low"
 
     return {
         "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": round(confidence_raw * 100, 1),
+        "confidence_percent": confidence_percent,
         "confidence_label": label,
         "agreement_score": round(agreement_score, 3),
         "threshold_score": round(threshold_score, 3),
@@ -441,15 +443,15 @@ def compute_submit_probability(
 ) -> dict:
     confidence_percent = confidence_score * 100.0
 
-    if grade >= 9.3 and confidence_percent >= 85.0:
+    if grade >= 9.4:
         label = "Strong Submit"
         probability = 0.95
-    elif grade >= 9.3 and confidence_percent < 85.0:
+    elif grade >= 9.0:
         label = "Submit"
-        probability = 0.80
-    elif 8.4 < grade < 9.3 and confidence_percent > 80.0:
+        probability = 0.82
+    elif 8.6 <= grade < 9.0 and confidence_percent >= 58.0:
         label = "Risky"
-        probability = 0.55
+        probability = 0.58
     else:
         label = "Do Not Submit"
         probability = 0.15
@@ -654,8 +656,8 @@ def decision_panel_admin(
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.80 else
-        "Moderate" if confidence["confidence_score"] >= 0.60 else
+        "Low" if confidence["confidence_score"] >= 0.75 else
+        "Moderate" if confidence["confidence_score"] >= 0.55 else
         "High"
     )
     st.write("Limiting Feature:", caps["limiter"])
@@ -932,7 +934,6 @@ if st.button("Run Analysis"):
     front_bytes = full_card_front.getvalue()
     back_bytes = full_card_back.getvalue()
 
-    # ---- front centering + edge
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -966,7 +967,6 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
-    # ---- corners
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -1007,7 +1007,6 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
-    # ---- surface
     surface = None
     scratch_score = None
     speckle_score = None
@@ -1046,7 +1045,6 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
-    # ---- player name detection
     player_meta = detect_player_name(front_bytes)
     detected_player_name = player_meta.get("player_name")
     detected_player_confidence = player_meta.get("player_name_confidence")
@@ -1054,7 +1052,6 @@ if st.button("Run Analysis"):
 
     st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
-    # ---- grade + confidence + submit
     grade = compute_grade(h, v, edge, corner, float(surface))
 
     confidence = compute_confidence(
@@ -1285,6 +1282,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload player_name:", payload["player_name"])
                 st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
                 st.write("DEBUG payload submit_percent:", payload["submit_percent"])
+                st.write("DEBUG payload submit_label:", payload["submit_label"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
