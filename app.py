@@ -87,6 +87,18 @@ tbody tr td {
     padding: 0.5rem;
     background: rgba(255,255,255,0.03);
 }
+.guide-box {
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 10px;
+    padding: 12px;
+    background: rgba(255,255,255,0.05);
+    margin-bottom: 14px;
+}
+.guide-title {
+    font-weight: 700;
+    color: #C9A44D;
+    margin-bottom: 8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -96,7 +108,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.4-mobile-preview-submit"
+MODEL_VERSION = "v9.5-player-guide-submit-rules"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -119,6 +131,9 @@ upload_headers = {
 
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = str(uuid.uuid4())
+
+if "last_save_success" not in st.session_state:
+    st.session_state.last_save_success = False
 
 # ============================================================
 # HELPERS
@@ -229,6 +244,10 @@ def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
 
+# ============================================================
+# GRADE MODEL
+# ============================================================
+
 def compute_fitted_grade(
     horizontal_ratio: float,
     vertical_ratio: float,
@@ -288,6 +307,10 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
     return compute_fitted_grade(h, v, corner, edge, surface)
 
+
+# ============================================================
+# CONFIDENCE LAYER
+# ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
     worst = min(float(h), float(v))
@@ -384,49 +407,30 @@ def compute_confidence(
     }
 
 
+# ============================================================
+# UPDATED SUBMIT RECOMMENDATION RULES
+# ============================================================
+
 def compute_submit_probability(
     grade: float,
     confidence_score: float,
     surface: float,
     band_spread: float
 ) -> dict:
-    if grade >= 9.2:
-        base = 0.95
-    elif grade >= 8.8:
-        base = 0.85
-    elif grade >= 8.3:
-        base = 0.70
-    elif grade >= 7.8:
-        base = 0.55
-    elif grade >= 7.0:
-        base = 0.35
-    else:
-        base = 0.15
+    confidence_percent = confidence_score * 100.0
 
-    confidence_adj = (confidence_score - 0.5) * 0.4
-
-    if surface >= 0.14:
-        surface_adj = -0.25
-    elif surface >= 0.12:
-        surface_adj = -0.15
-    elif surface >= 0.10:
-        surface_adj = -0.05
-    else:
-        surface_adj = 0.05
-
-    spread_adj = -0.10 if band_spread >= 2 else 0.0
-
-    probability = base + confidence_adj + surface_adj + spread_adj
-    probability = max(0.0, min(1.0, probability))
-
-    if probability >= 0.85:
+    if grade >= 9.3 and confidence_percent >= 85.0:
         label = "Strong Submit"
-    elif probability >= 0.65:
+        probability = 0.95
+    elif grade >= 9.3 and confidence_percent < 85.0:
         label = "Submit"
-    elif probability >= 0.45:
-        label = "Borderline"
+        probability = 0.80
+    elif 8.4 < grade < 9.3 and confidence_percent > 80.0:
+        label = "Risky"
+        probability = 0.55
     else:
         label = "Do Not Submit"
+        probability = 0.15
 
     return {
         "submit_probability": round(probability, 3),
@@ -434,6 +438,59 @@ def compute_submit_probability(
         "submit_label": label,
     }
 
+
+# ============================================================
+# PLAYER NAME DETECTION
+# ============================================================
+
+def detect_player_name(front_bytes: bytes) -> dict:
+    """
+    Tries to call a backend metadata endpoint.
+    Gracefully fails if the endpoint is not implemented or unavailable.
+    Expected response shape:
+    {
+      "player_name": "Ken Griffey Jr.",
+      "player_name_confidence": 0.91,
+      "player_name_source": "vision"
+    }
+    """
+    try:
+        resp = requests.post(
+            f"{API_BASE}/extract_card_metadata",
+            files={"file": front_bytes},
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            return {
+                "player_name": None,
+                "player_name_confidence": None,
+                "player_name_source": "unavailable",
+            }
+
+        data = resp.json()
+        if "error" in data:
+            return {
+                "player_name": None,
+                "player_name_confidence": None,
+                "player_name_source": "error",
+            }
+
+        return {
+            "player_name": data.get("player_name"),
+            "player_name_confidence": data.get("player_name_confidence"),
+            "player_name_source": data.get("player_name_source", "api"),
+        }
+    except Exception:
+        return {
+            "player_name": None,
+            "player_name_confidence": None,
+            "player_name_source": "unavailable",
+        }
+
+
+# ============================================================
+# UI HELPERS
+# ============================================================
 
 def pil_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
@@ -570,8 +627,8 @@ def decision_panel_admin(
         st.success("STRONG SUBMIT")
     elif submit["submit_label"] == "Submit":
         st.success("SUBMIT")
-    elif submit["submit_label"] == "Borderline":
-        st.warning("BORDERLINE")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
     else:
         st.error("DO NOT SUBMIT")
 
@@ -628,8 +685,8 @@ def decision_panel_user(
         st.success("STRONG SUBMIT")
     elif submit["submit_label"] == "Submit":
         st.success("SUBMIT")
-    elif submit["submit_label"] == "Borderline":
-        st.warning("BORDERLINE")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
     else:
         st.error("DO NOT SUBMIT")
 
@@ -656,11 +713,20 @@ def decision_panel_user(
 
 
 # ============================================================
-# AUTHORIZATION
+# ACCESS + USER GUIDE
 # ============================================================
 
 st.markdown("### Access")
 user_email = st.text_input("Enter Access Email")
+
+st.markdown("""
+<div class="guide-box">
+    <div class="guide-title">USER GUIDE BEST PRACTICES:</div>
+    <div>• All pictures taken from same height/zoom with similar lighting</div>
+    <div>• Take pictures of all 4 front corners</div>
+    <div>• Use manual centering</div>
+</div>
+""", unsafe_allow_html=True)
 
 if user_email:
     user_check = requests.get(
@@ -700,6 +766,13 @@ if psa_is_graded:
 # ============================================================
 
 st.markdown("## Upload Card Images")
+
+clear_col, _ = st.columns([1, 3])
+with clear_col:
+    if st.button("🧹 Clear Images"):
+        st.session_state.upload_key = str(uuid.uuid4())
+        st.session_state.last_save_success = False
+        st.rerun()
 
 st.markdown('<div class="upload-title">Front Image</div>', unsafe_allow_html=True)
 full_card_front = st.file_uploader(
@@ -819,6 +892,8 @@ if use_manual_centering:
 # ============================================================
 
 if st.button("Run Analysis"):
+    st.session_state.last_save_success = False
+
     if full_card_front is None:
         st.error("Front image required")
         st.stop()
@@ -829,6 +904,7 @@ if st.button("Run Analysis"):
 
     front_bytes = full_card_front.getvalue()
 
+    # ---- front centering + edge
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
@@ -862,6 +938,7 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
+    # ---- corners
     corner_files = [corner1, corner2]
     if corner3 is not None:
         corner_files.append(corner3)
@@ -902,6 +979,7 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
+    # ---- surface
     surface = None
     scratch_score = None
     speckle_score = None
@@ -940,6 +1018,31 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
+    # ---- player name detection
+    player_meta = detect_player_name(front_bytes)
+    detected_player_name = player_meta.get("player_name")
+    detected_player_confidence = player_meta.get("player_name_confidence")
+    detected_player_source = player_meta.get("player_name_source")
+
+    st.markdown("### Player Name")
+    if detected_player_name:
+        st.write(
+            f"Detected player: {detected_player_name}"
+            + (f" ({round(float(detected_player_confidence) * 100, 1)}%)" if detected_player_confidence is not None else "")
+        )
+    else:
+        st.write("Detected player: Not found")
+
+    player_name_override = st.text_input(
+        "Player Name (edit or confirm before save)",
+        value=detected_player_name if detected_player_name else ""
+    )
+
+    final_player_name = player_name_override.strip() if player_name_override else None
+    final_player_name_confidence = detected_player_confidence if detected_player_name else None
+    final_player_name_source = "manual_override" if final_player_name and final_player_name != detected_player_name else detected_player_source
+
+    # ---- grade + confidence + submit
     grade = compute_grade(h, v, edge, corner, float(surface))
 
     confidence = compute_confidence(
@@ -959,6 +1062,7 @@ if st.button("Run Analysis"):
         band_spread=confidence["band_spread"],
     )
 
+    # ---- preview
     preview_img = build_card_preview_with_overlay(
         image_bytes=front_bytes,
         horizontal_ratio=h,
@@ -972,6 +1076,7 @@ if st.button("Run Analysis"):
         st.image(preview_img, caption="Preview with centering overlay lines", use_container_width=False)
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # ---- results
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
@@ -997,6 +1102,7 @@ if st.button("Run Analysis"):
         if gloss_score is not None:
             st.write("Gloss Score:", round(float(gloss_score), 4))
 
+    # ---- upload images
     card_id = str(uuid.uuid4())
     front_name = f"{card_id}_front.jpg"
     back_name = f"{card_id}_back.jpg"
@@ -1023,6 +1129,7 @@ if st.button("Run Analysis"):
     front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
     back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if full_card_back else None
 
+    # ---- payload
     payload = {
         "card_id": card_id,
         "model_version": MODEL_VERSION,
@@ -1030,6 +1137,9 @@ if st.button("Run Analysis"):
         "stock_type": json_safe(stock_type),
         "psa_is_graded": json_safe(psa_is_graded),
         "psa_actual_grade": json_safe(psa_actual_grade),
+        "player_name": json_safe(final_player_name),
+        "player_name_confidence": json_safe(final_player_name_confidence),
+        "player_name_source": json_safe(final_player_name_source),
         "horizontal_ratio": json_safe(h),
         "vertical_ratio": json_safe(v),
         "edge_score": json_safe(edge),
@@ -1066,17 +1176,21 @@ if st.button("Run Analysis"):
         with st.expander("Debug"):
             st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
             st.write("DEBUG surface final:", surface)
-            st.write("DEBUG payload surface_score:", payload["surface_score"])
+            st.write("DEBUG detected player:", detected_player_name)
+            st.write("DEBUG player source:", detected_player_source)
+            st.write("DEBUG payload player_name:", payload["player_name"])
             st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
             st.write("DEBUG payload submit_percent:", payload["submit_percent"])
 
+    # ---- save
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
     if save_response.status_code in [200, 201]:
+        st.session_state.last_save_success = True
         st.success("Saved successfully")
-        st.session_state.upload_key = str(uuid.uuid4())
-        st.rerun()
+        st.info("Images remain loaded. Use the 'Clear Images' button when you're ready.")
     else:
+        st.session_state.last_save_success = False
         st.error(f"Database save failed: {save_response.text}")
 
 # ============================================================
@@ -1173,6 +1287,9 @@ if user_role == "admin":
                 "stock_type": json_safe(row.get("stock_type")),
                 "psa_is_graded": json_safe(row.get("psa_is_graded")),
                 "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
+                "player_name": json_safe(row.get("player_name")),
+                "player_name_confidence": json_safe(row.get("player_name_confidence")),
+                "player_name_source": json_safe(row.get("player_name_source")),
                 "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
                 "vertical_ratio": json_safe(row.get("vertical_ratio")),
                 "edge_score": json_safe(row.get("edge_score")),
