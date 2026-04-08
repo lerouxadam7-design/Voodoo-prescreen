@@ -115,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7-confidence-submit-recalibrated"
+MODEL_VERSION = "v9.7.1-confidence-softened"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -331,7 +331,7 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
 
 
 # ============================================================
-# CONFIDENCE LAYER (RECALIBRATED)
+# CONFIDENCE LAYER (V9.7.1 SOFTENED)
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -375,17 +375,17 @@ def compute_confidence(
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 5.5))
+    agreement_score = max(0.0, 1.0 - (spread / 6.0))
 
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
     d_surface = band_distance_surface(surface)
 
-    center_conf = min(1.0, d_center / 0.075)
-    corner_conf = min(1.0, d_corner / 0.12)
-    edge_conf = min(1.0, d_edge / 0.018)
-    surface_conf = min(1.0, d_surface / 0.05)
+    center_conf = min(1.0, d_center / 0.085)
+    corner_conf = min(1.0, d_corner / 0.14)
+    edge_conf = min(1.0, d_edge / 0.020)
+    surface_conf = min(1.0, d_surface / 0.055)
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
@@ -432,7 +432,7 @@ def compute_confidence(
 
 
 # ============================================================
-# UPDATED SUBMIT RECOMMENDATION RULES
+# SUBMIT RECOMMENDATION RULES (UNCHANGED FROM V9.7)
 # ============================================================
 
 def compute_submit_probability(
