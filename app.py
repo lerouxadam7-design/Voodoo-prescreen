@@ -115,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.2-rollback"
+MODEL_VERSION = "v9.7.2"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
