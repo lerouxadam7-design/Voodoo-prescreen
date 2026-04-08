@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # ============================================================
 # DESIGN THEME
@@ -32,7 +32,7 @@ label, p, span, div, .stMarkdown {
 }
 .small-note {
     color: #dddddd !important;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
 }
 input, textarea {
     color: black !important;
@@ -67,6 +67,26 @@ tbody tr td {
 [data-testid="stMetricLabel"] {
     color: white !important;
 }
+[data-testid="stFileUploader"] {
+    padding: 0.2rem 0.2rem !important;
+}
+[data-testid="stFileUploader"] section {
+    padding: 0.4rem 0.5rem !important;
+    min-height: 40px !important;
+}
+[data-testid="stFileUploader"] div {
+    font-size: 0.78rem !important;
+}
+.upload-title {
+    font-size: 0.9rem;
+    margin-bottom: 0.15rem;
+}
+.preview-card {
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    padding: 0.5rem;
+    background: rgba(255,255,255,0.03);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,7 +96,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.3-confidence-submit-probability"
+MODEL_VERSION = "v9.4-mobile-preview-submit"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -96,6 +116,9 @@ upload_headers = {
     "apikey": SUPABASE_KEY,
     "Content-Type": "image/jpeg",
 }
+
+if "upload_key" not in st.session_state:
+    st.session_state.upload_key = str(uuid.uuid4())
 
 # ============================================================
 # HELPERS
@@ -206,10 +229,6 @@ def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
 
 
-# ============================================================
-# FITTED GRADE MODEL
-# ============================================================
-
 def compute_fitted_grade(
     horizontal_ratio: float,
     vertical_ratio: float,
@@ -269,10 +288,6 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
     return compute_fitted_grade(h, v, corner, edge, surface)
 
-
-# ============================================================
-# CONFIDENCE LAYER
-# ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
     worst = min(float(h), float(v))
@@ -369,10 +384,6 @@ def compute_confidence(
     }
 
 
-# ============================================================
-# SUBMIT PROBABILITY MODEL
-# ============================================================
-
 def compute_submit_probability(
     grade: float,
     confidence_score: float,
@@ -424,11 +435,126 @@ def compute_submit_probability(
     }
 
 
-# ============================================================
-# UI HELPERS
-# ============================================================
+def pil_to_base64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
-def decision_panel(
+
+def render_overlay_image(
+    img: Image.Image,
+    left_x: float,
+    right_x: float,
+    top_y: float,
+    bottom_y: float
+) -> None:
+    img_b64 = pil_to_base64(img)
+    width, height = img.size
+
+    html = f"""
+    <div style="
+        position: relative;
+        width: {width}px;
+        height: {height}px;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        border: 1px solid #666;
+        border-radius: 8px;
+    ">
+        <img
+            src="data:image/png;base64,{img_b64}"
+            style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: {width}px;
+                height: {height}px;
+                object-fit: contain;
+                z-index: 1;
+            "
+        />
+        <div style="position:absolute;top:0;left:{left_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:0;left:{right_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{top_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{bottom_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
+    </div>
+    """
+    components.html(html, height=height + 8, width=width + 8, scrolling=False)
+
+
+def build_card_preview_with_overlay(
+    image_bytes: bytes,
+    horizontal_ratio: float = None,
+    vertical_ratio: float = None,
+    max_width: int = 320
+):
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        return None
+
+    scale = min(1.0, max_width / img.width)
+    new_size = (int(img.width * scale), int(img.height * scale))
+    preview = img.resize(new_size)
+    draw = ImageDraw.Draw(preview)
+
+    w, h = preview.size
+
+    if horizontal_ratio is not None and 0 < float(horizontal_ratio) <= 1:
+        r = float(horizontal_ratio)
+        left_prop = r / (1 + r)
+        right_prop = 1 / (1 + r)
+        left_x = int(w * left_prop)
+        right_x = int(w * right_prop)
+        draw.line([(left_x, 0), (left_x, h)], fill=(0, 255, 0), width=2)
+        draw.line([(right_x, 0), (right_x, h)], fill=(0, 255, 0), width=2)
+
+    if vertical_ratio is not None and 0 < float(vertical_ratio) <= 1:
+        r = float(vertical_ratio)
+        top_prop = r / (1 + r)
+        bottom_prop = 1 / (1 + r)
+        top_y = int(h * top_prop)
+        bottom_y = int(h * bottom_prop)
+        draw.line([(0, top_y), (w, top_y)], fill=(0, 255, 0), width=2)
+        draw.line([(0, bottom_y), (w, bottom_y)], fill=(0, 255, 0), width=2)
+
+    return preview
+
+
+def backfill_surface_from_url(front_image_url: str):
+    if not front_image_url:
+        return None, None, None, None
+
+    try:
+        img_resp = requests.get(front_image_url, timeout=60)
+        if img_resp.status_code != 200:
+            return None, None, None, None
+
+        sr = requests.post(
+            f"{API_BASE}/analyze_surface",
+            files={"file": img_resp.content},
+            timeout=60,
+        )
+
+        if sr.status_code != 200:
+            return None, None, None, None
+
+        surface_data = sr.json()
+        if "error" in surface_data:
+            return None, None, None, None
+
+        return (
+            surface_data.get("surface_score"),
+            surface_data.get("scratch_score"),
+            surface_data.get("speckle_score"),
+            surface_data.get("gloss_score"),
+        )
+    except Exception:
+        return None, None, None, None
+
+
+def decision_panel_admin(
     grade: float,
     h: float,
     v: float,
@@ -488,83 +614,45 @@ def decision_panel(
     st.write("Surface Band:", caps["surface_cap"])
 
 
-def pil_to_base64(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def render_overlay_image(
-    img: Image.Image,
-    left_x: float,
-    right_x: float,
-    top_y: float,
-    bottom_y: float
+def decision_panel_user(
+    grade: float,
+    h: float,
+    v: float,
+    corner: float,
+    edge: float,
+    surface: float,
+    confidence: dict,
+    submit: dict
 ) -> None:
-    img_b64 = pil_to_base64(img)
-    width, height = img.size
+    if submit["submit_label"] == "Strong Submit":
+        st.success("STRONG SUBMIT")
+    elif submit["submit_label"] == "Submit":
+        st.success("SUBMIT")
+    elif submit["submit_label"] == "Borderline":
+        st.warning("BORDERLINE")
+    else:
+        st.error("DO NOT SUBMIT")
 
-    html = f"""
-    <div style="
-        position: relative;
-        width: {width}px;
-        height: {height}px;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        border: 1px solid #666;
-    ">
-        <img
-            src="data:image/png;base64,{img_b64}"
-            style="
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: {width}px;
-                height: {height}px;
-                object-fit: contain;
-                z-index: 1;
-            "
-        />
-        <div style="position:absolute;top:0;left:{left_x}px;width:3px;height:{height}px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:0;left:{right_x}px;width:3px;height:{height}px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:{top_y}px;left:0;width:{width}px;height:3px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:{bottom_y}px;left:0;width:{width}px;height:3px;background:#00FF00;z-index:2;"></div>
-    </div>
-    """
-    components.html(html, height=height + 10, width=width + 10, scrolling=False)
+    st.markdown("## Result")
+    col1, col2, col3 = st.columns(3)
 
+    with col1:
+        st.metric("Grade", grade)
 
-def backfill_surface_from_url(front_image_url: str):
-    if not front_image_url:
-        return None, None, None, None
+    with col2:
+        st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
 
-    try:
-        img_resp = requests.get(front_image_url, timeout=60)
-        if img_resp.status_code != 200:
-            return None, None, None, None
+    with col3:
+        st.metric("Submit", submit["submit_label"])
 
-        sr = requests.post(
-            f"{API_BASE}/analyze_surface",
-            files={"file": img_resp.content},
-            timeout=60,
-        )
+    st.markdown("### Centering")
+    st.write("Horizontal:", ratio_to_psa_centering(h))
+    st.write("Vertical:", ratio_to_psa_centering(v))
 
-        if sr.status_code != 200:
-            return None, None, None, None
-
-        surface_data = sr.json()
-        if "error" in surface_data:
-            return None, None, None, None
-
-        return (
-            surface_data.get("surface_score"),
-            surface_data.get("scratch_score"),
-            surface_data.get("speckle_score"),
-            surface_data.get("gloss_score"),
-        )
-    except Exception:
-        return None, None, None, None
+    st.markdown("### Subgrades")
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
 
 
 # ============================================================
@@ -599,7 +687,6 @@ else:
 # ============================================================
 
 st.markdown("## Card Information")
-
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
@@ -614,14 +701,54 @@ if psa_is_graded:
 
 st.markdown("## Upload Card Images")
 
-full_card_front = st.file_uploader("Front Image", ["jpg", "jpeg", "png"])
-full_card_back = st.file_uploader("Back Image", ["jpg", "jpeg", "png"])
+st.markdown('<div class="upload-title">Front Image</div>', unsafe_allow_html=True)
+full_card_front = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"front_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
+st.markdown('<div class="upload-title">Back Image</div>', unsafe_allow_html=True)
+full_card_back = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"back_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
 
 st.markdown("### Corner Images (2 Required)")
-corner1 = st.file_uploader("Corner 1 (Required)", ["jpg", "jpeg", "png"], key="corner1")
-corner2 = st.file_uploader("Corner 2 (Required)", ["jpg", "jpeg", "png"], key="corner2")
-corner3 = st.file_uploader("Corner 3 (Optional)", ["jpg", "jpeg", "png"], key="corner3")
-corner4 = st.file_uploader("Corner 4 (Optional)", ["jpg", "jpeg", "png"], key="corner4")
+st.markdown('<div class="upload-title">Corner 1</div>', unsafe_allow_html=True)
+corner1 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c1_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
+st.markdown('<div class="upload-title">Corner 2</div>', unsafe_allow_html=True)
+corner2 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c2_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
+st.markdown('<div class="upload-title">Corner 3 (Optional)</div>', unsafe_allow_html=True)
+corner3 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c3_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
+st.markdown('<div class="upload-title">Corner 4 (Optional)</div>', unsafe_allow_html=True)
+corner4 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c4_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
 
 # ============================================================
 # MANUAL CENTERING ASSIST
@@ -644,23 +771,24 @@ if use_manual_centering:
             st.error(f"Could not open front image: {e}")
             st.stop()
 
-        max_display_width = 900
+        max_display_width = 450
         scale = min(1.0, max_display_width / front_image.width)
         display_width = int(front_image.width * scale)
         display_height = int(front_image.height * scale)
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="small-note">The image below is rotated 90 degrees clockwise for manual centering. Move the 4 guide lines onto the measurable borders.</div>',
+            '<div class="small-note">Image rotated 90 degrees clockwise for manual centering. Use fine sliders for precise mobile adjustment.</div>',
             unsafe_allow_html=True
         )
 
-        col_a, col_b = st.columns([1, 2])
+        col_a, col_b = st.columns([1, 1.1])
+
         with col_a:
-            left_percent = st.slider("Left Line", 0, 100, 8)
-            right_percent = st.slider("Right Line", 0, 100, 92)
-            top_percent = st.slider("Top Line", 0, 100, 8)
-            bottom_percent = st.slider("Bottom Line", 0, 100, 92)
+            left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
+            right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
+            top_percent = st.slider("Top", 0.0, 100.0, 8.0, step=0.1)
+            bottom_percent = st.slider("Bottom", 0.0, 100.0, 92.0, step=0.1)
 
         left_x = (left_percent / 100.0) * display_width
         right_x = (right_percent / 100.0) * display_width
@@ -671,7 +799,7 @@ if use_manual_centering:
             render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
 
         if right_x <= left_x or bottom_y <= top_y:
-            st.error("Right line must be right of left line, and bottom line must be below top line.")
+            st.error("Right must be right of left, and bottom must be below top.")
         else:
             manual_left = left_x
             manual_right = display_width - right_x
@@ -699,10 +827,12 @@ if st.button("Run Analysis"):
         st.error("At least 2 corner images are required")
         st.stop()
 
+    front_bytes = full_card_front.getvalue()
+
     try:
         r = requests.post(
             f"{API_BASE}/analyze",
-            files={"file": full_card_front.getvalue()},
+            files={"file": front_bytes},
             timeout=60,
         )
     except Exception as e:
@@ -782,7 +912,7 @@ if st.button("Run Analysis"):
     try:
         sr = requests.post(
             f"{API_BASE}/analyze_surface",
-            files={"file": full_card_front.getvalue()},
+            files={"file": front_bytes},
             timeout=60,
         )
     except Exception as e:
@@ -810,9 +940,6 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
-    st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
-    st.write("DEBUG surface final:", surface)
-
     grade = compute_grade(h, v, edge, corner, float(surface))
 
     confidence = compute_confidence(
@@ -832,26 +959,43 @@ if st.button("Run Analysis"):
         band_spread=confidence["band_spread"],
     )
 
+    preview_img = build_card_preview_with_overlay(
+        image_bytes=front_bytes,
+        horizontal_ratio=h,
+        vertical_ratio=v,
+        max_width=320
+    )
+
+    if preview_img is not None:
+        st.markdown("### Card Preview")
+        st.markdown('<div class="preview-card">', unsafe_allow_html=True)
+        st.image(preview_img, caption="Preview with centering overlay lines", use_container_width=False)
+        st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown("## Grade")
     st.markdown(f"### {grade}")
 
-    decision_panel(grade, h, v, edge, corner, float(surface), confidence, submit)
+    if user_role == "admin":
+        decision_panel_admin(grade, h, v, edge, corner, float(surface), confidence, submit)
+    else:
+        decision_panel_user(grade, h, v, corner, edge, float(surface), confidence, submit)
 
-    st.markdown("### Raw Feature Values")
-    st.write("Horizontal Ratio:", round(h, 4))
-    st.write("Vertical Ratio:", round(v, 4))
-    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
-    st.write("Vertical Centering:", ratio_to_psa_centering(v))
-    st.write("Corner Score:", round(corner, 4))
-    st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
-    st.write("Edge Score:", round(edge, 4))
-    st.write("Surface Score:", round(float(surface), 4))
-    if scratch_score is not None:
-        st.write("Scratch Score:", round(float(scratch_score), 4))
-    if speckle_score is not None:
-        st.write("Speckle Score:", round(float(speckle_score), 4))
-    if gloss_score is not None:
-        st.write("Gloss Score:", round(float(gloss_score), 4))
+    if user_role == "admin":
+        st.markdown("### Raw Feature Values")
+        st.write("Horizontal Ratio:", round(h, 4))
+        st.write("Vertical Ratio:", round(v, 4))
+        st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+        st.write("Vertical Centering:", ratio_to_psa_centering(v))
+        st.write("Corner Score:", round(corner, 4))
+        st.write("Adjusted Corner Score:", round(remap_corner_for_model(corner), 4))
+        st.write("Edge Score:", round(edge, 4))
+        st.write("Surface Score:", round(float(surface), 4))
+        if scratch_score is not None:
+            st.write("Scratch Score:", round(float(scratch_score), 4))
+        if speckle_score is not None:
+            st.write("Speckle Score:", round(float(speckle_score), 4))
+        if gloss_score is not None:
+            st.write("Gloss Score:", round(float(gloss_score), 4))
 
     card_id = str(uuid.uuid4())
     front_name = f"{card_id}_front.jpg"
@@ -860,7 +1004,7 @@ if st.button("Run Analysis"):
     front_upload = requests.post(
         f"{SUPABASE_URL}/storage/v1/object/card-images/{front_name}",
         headers=upload_headers,
-        data=full_card_front.getvalue(),
+        data=front_bytes,
         timeout=60,
     )
     if front_upload.status_code not in [200, 201]:
@@ -918,14 +1062,20 @@ if st.button("Run Analysis"):
         "front_vertical_ratio_manual": json_safe(manual_v_ratio if use_manual_centering else None),
     }
 
-    st.write("DEBUG payload surface_score:", payload["surface_score"])
-    st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
-    st.write("DEBUG payload submit_percent:", payload["submit_percent"])
+    if user_role == "admin":
+        with st.expander("Debug"):
+            st.write("DEBUG surface response:", surface_data if surface_data is not None else "no surface_data")
+            st.write("DEBUG surface final:", surface)
+            st.write("DEBUG payload surface_score:", payload["surface_score"])
+            st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
+            st.write("DEBUG payload submit_percent:", payload["submit_percent"])
 
     save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
     if save_response.status_code in [200, 201]:
         st.success("Saved successfully")
+        st.session_state.upload_key = str(uuid.uuid4())
+        st.rerun()
     else:
         st.error(f"Database save failed: {save_response.text}")
 
