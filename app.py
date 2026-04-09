@@ -55,11 +55,13 @@ input::placeholder, textarea::placeholder {
 div[data-baseweb="select"] * {
     color: black !important;
 }
-.stButton > button {
+.stButton > button,
+[data-testid="stDownloadButton"] > button {
     background-color: #C9A44D !important;
     color: black !important;
     border-radius: 10px !important;
     font-weight: bold !important;
+    border: none !important;
 }
 thead tr th,
 tbody tr td {
@@ -125,7 +127,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.5-user-csv-download"
+MODEL_VERSION = "v9.7.6-user-csv-download-no-email"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -273,27 +275,6 @@ def csv_download_bytes(df: pd.DataFrame) -> bytes:
     buffer = io.StringIO()
     df.to_csv(buffer, index=False, quoting=csv.QUOTE_MINIMAL)
     return buffer.getvalue().encode("utf-8")
-
-
-def send_test_email(to_email: str):
-    try:
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {st.secrets['resend']['api_key']}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": st.secrets["resend"]["from_email"],
-                "to": [to_email],
-                "subject": "Voodoo Test Email",
-                "html": "<p>This is a test email from Voodoo Sports Grading.</p>",
-            },
-            timeout=30,
-        )
-        return resp.status_code, resp.text
-    except Exception as e:
-        return None, str(e)
 
 
 def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
@@ -724,17 +705,6 @@ st.markdown("""
     <div>• Use manual centering</div>
 </div>
 """, unsafe_allow_html=True)
-
-st.markdown("## Email Test")
-if st.button("Send Test Email"):
-    if not user_email:
-        st.error("Enter your email first")
-    else:
-        status, response = send_test_email(user_email)
-        if status == 200:
-            st.success("Test email sent successfully")
-        else:
-            st.error(f"Email failed: {response}")
 
 if user_email:
     user_check = requests.get(
