@@ -127,7 +127,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.6"
+MODEL_VERSION = "v9.7.6-Surface Test"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
