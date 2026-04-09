@@ -127,7 +127,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.6-Surface Test"
+MODEL_VERSION = "v9.7.7-surface-softened-option-c"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -327,20 +327,31 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
 # GRADE MODEL
 # ============================================================
 
-def compute_fitted_grade(horizontal_ratio: float, vertical_ratio: float, corner_score: float, edge_score: float, surface_score: float) -> float:
+def compute_fitted_grade(
+    horizontal_ratio: float,
+    vertical_ratio: float,
+    corner_score: float,
+    edge_score: float,
+    surface_score: float
+) -> float:
     v_good = 1.0 - float(vertical_ratio)
     corner_bad = float(corner_score)
     edge_bad = float(edge_score)
-    surface_bad = float(surface_score)
+
+    # Option C:
+    # 1. cap surface influence
+    # 2. soften surface coefficients
+    surface_bad = min(float(surface_score), 0.16)
 
     grade = (
         8.35
         + 0.25 * v_good
         - 0.47 * corner_bad
         - 0.94 * edge_bad
-        + 38.67 * surface_bad
-        - 350.94 * (surface_bad ** 2)
+        + 32.0 * surface_bad
+        - 300.0 * (surface_bad ** 2)
     )
+
     return round(max(1.0, min(10.0, grade)), 2)
 
 
@@ -404,7 +415,15 @@ def band_distance_surface(surface: float) -> float:
     return min(abs(s - t) for t in thresholds)
 
 
-def compute_confidence(h: float, v: float, edge: float, corner: float, surface: float, used_surface_fallback: bool = False, corner_count: int = 0) -> dict:
+def compute_confidence(
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float,
+    used_surface_fallback: bool = False,
+    corner_count: int = 0
+) -> dict:
     centering_band = centering_psa_grade(h, v)
     corner_band = corner_grade_band(corner)
     edge_band = edge_grade_band(edge)
@@ -563,6 +582,7 @@ def build_card_preview_with_overlay(image_bytes: bytes, horizontal_ratio: float 
 def backfill_surface_from_url(front_image_url: str):
     if not front_image_url:
         return None, None, None, None
+
     try:
         img_resp = requests.get(front_image_url, timeout=60)
         if img_resp.status_code != 200:
@@ -573,6 +593,7 @@ def backfill_surface_from_url(front_image_url: str):
             files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
             timeout=60,
         )
+
         if sr.status_code != 200:
             return None, None, None, None
 
