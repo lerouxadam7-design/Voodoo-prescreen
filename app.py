@@ -98,13 +98,6 @@ tbody tr td {
     background: rgba(255,255,255,0.05);
     margin-bottom: 14px;
 }
-.section-box {
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 12px;
-    padding: 12px;
-    background: rgba(255,255,255,0.04);
-    margin-bottom: 14px;
-}
 .guide-title {
     font-weight: 700;
     color: #C9A44D;
@@ -127,7 +120,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.7-surface-softened-option-c"
+MODEL_VERSION = "v9.7.8-range-recalibrated"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -148,6 +141,9 @@ upload_headers = {
     "apikey": SUPABASE_KEY,
     "Content-Type": "image/jpeg",
 }
+
+RAW_GRADE_SCALE = 1.12965052
+RAW_GRADE_OFFSET = -0.98016630
 
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = str(uuid.uuid4())
@@ -286,11 +282,9 @@ def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
         )
         if resp.status_code != 200:
             return pd.DataFrame()
-
         data = resp.json()
         if not isinstance(data, list):
             return pd.DataFrame()
-
         return pd.DataFrame(data)
     except Exception:
         return pd.DataFrame()
@@ -299,7 +293,6 @@ def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
 def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-
     preferred_cols = [
         "created_at",
         "card_id",
@@ -319,7 +312,6 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
         "front_image_url",
         "back_image_url",
     ]
-
     export_cols = [c for c in preferred_cols if c in df.columns]
     return df[export_cols].copy()
 
@@ -327,7 +319,7 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
 # GRADE MODEL
 # ============================================================
 
-def compute_fitted_grade(
+def compute_raw_fitted_grade(
     horizontal_ratio: float,
     vertical_ratio: float,
     corner_score: float,
@@ -338,12 +330,9 @@ def compute_fitted_grade(
     corner_bad = float(corner_score)
     edge_bad = float(edge_score)
 
-    # Option C:
-    # 1. cap surface influence
-    # 2. soften surface coefficients
     surface_bad = min(float(surface_score), 0.16)
 
-    grade = (
+    raw_grade = (
         8.35
         + 0.25 * v_good
         - 0.47 * corner_bad
@@ -352,7 +341,29 @@ def compute_fitted_grade(
         - 300.0 * (surface_bad ** 2)
     )
 
+    return round(max(1.0, min(10.0, raw_grade)), 2)
+
+
+def calibrate_grade(raw_grade: float) -> float:
+    grade = RAW_GRADE_SCALE * float(raw_grade) + RAW_GRADE_OFFSET
     return round(max(1.0, min(10.0, grade)), 2)
+
+
+def compute_fitted_grade(
+    horizontal_ratio: float,
+    vertical_ratio: float,
+    corner_score: float,
+    edge_score: float,
+    surface_score: float
+) -> float:
+    raw_grade = compute_raw_fitted_grade(
+        horizontal_ratio=horizontal_ratio,
+        vertical_ratio=vertical_ratio,
+        corner_score=corner_score,
+        edge_score=edge_score,
+        surface_score=surface_score,
+    )
+    return calibrate_grade(raw_grade)
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -361,7 +372,8 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    overall = compute_fitted_grade(h, v, corner, edge, surface)
+    raw_overall = compute_raw_fitted_grade(h, v, corner, edge, surface)
+    calibrated_overall = calibrate_grade(raw_overall)
 
     cap_values = {
         "Centering": centering_cap,
@@ -372,9 +384,10 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     limiting_feature = min(cap_values, key=cap_values.get)
 
     return {
-        "overall_grade": overall,
-        "candidate_grade": overall,
-        "base_fitted_grade": overall,
+        "overall_grade": calibrated_overall,
+        "candidate_grade": calibrated_overall,
+        "raw_fitted_grade": raw_overall,
+        "base_fitted_grade": raw_overall,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -582,7 +595,6 @@ def build_card_preview_with_overlay(image_bytes: bytes, horizontal_ratio: float 
 def backfill_surface_from_url(front_image_url: str):
     if not front_image_url:
         return None, None, None, None
-
     try:
         img_resp = requests.get(front_image_url, timeout=60)
         if img_resp.status_code != 200:
@@ -654,9 +666,9 @@ def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: 
     st.write("Data Quality Score:", confidence["data_score"])
     st.write("Band Spread:", confidence["band_spread"])
 
-    st.markdown("### Fitted Formula Output")
-    st.write("Base Fitted Grade:", caps["base_fitted_grade"])
-    st.write("Predicted Grade:", caps["candidate_grade"])
+    st.markdown("### Formula Output")
+    st.write("Raw Fitted Grade:", caps["raw_fitted_grade"])
+    st.write("Calibrated Grade:", caps["candidate_grade"])
 
 
 def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: float, surface: float, confidence: dict, submit: dict) -> None:
@@ -759,7 +771,6 @@ if st.button("Load My Submission Data"):
         st.warning("No submissions found for this email.")
     else:
         export_df = build_user_export_df(user_df)
-
         st.success(f"Found {len(export_df)} submission(s).")
         st.dataframe(export_df, use_container_width=True, hide_index=True)
 
@@ -867,6 +878,7 @@ if use_manual_centering:
         )
 
         col_a, col_b = st.columns([1, 1.1])
+
         with col_a:
             left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
             right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
@@ -1034,8 +1046,8 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
+    raw_grade = compute_raw_fitted_grade(h, v, corner, edge, float(surface))
     grade = compute_grade(h, v, edge, corner, float(surface))
-    base_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
 
     confidence = compute_confidence(
         h=h,
@@ -1084,7 +1096,8 @@ if st.button("Run Analysis"):
         "gloss_score": gloss_score,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
-        "base_fitted_grade": base_grade,
+        "raw_fitted_grade": raw_grade,
+        "base_fitted_grade": raw_grade,
         "grade": grade,
         "confidence": confidence,
         "submit": submit,
@@ -1179,7 +1192,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
-        st.write("Base Fitted Grade:", round(float(result["base_fitted_grade"]), 2))
+        st.write("Raw Fitted Grade:", round(float(result["raw_fitted_grade"]), 2))
+        st.write("Calibrated Grade:", round(float(result["grade"]), 2))
         st.write("Corner Count Used:", result["corner_count_used"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Analysis Notes:", result["analysis_notes"])
@@ -1274,11 +1288,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         if user_role == "admin":
             with st.expander("Debug"):
                 st.write("DEBUG surface response:", result["surface_data"] if result["surface_data"] is not None else "no surface_data")
-                st.write("DEBUG payload player_name:", payload["player_name"])
                 st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
                 st.write("DEBUG payload submit_percent:", payload["submit_percent"])
-                st.write("DEBUG payload submit_label:", payload["submit_label"])
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
+                st.write("DEBUG raw fitted grade:", result["raw_fitted_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
