@@ -127,7 +127,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.6-user-csv-download-no-email"
+MODEL_VERSION = "v9.7.6"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
