@@ -125,7 +125,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.5-ops-admin-upgrades"
+MODEL_VERSION = "v9.7.5-step4-email-test"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -274,6 +274,26 @@ def csv_download_bytes(df: pd.DataFrame) -> bytes:
     df.to_csv(buffer, index=False, quoting=csv.QUOTE_MINIMAL)
     return buffer.getvalue().encode("utf-8")
 
+
+def send_test_email(to_email: str):
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {st.secrets['resend']['api_key']}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": st.secrets["resend"]["from_email"],
+                "to": [to_email],
+                "subject": "Voodoo Test Email",
+                "html": "<p>This is a test email from Voodoo Sports Grading.</p>",
+            },
+            timeout=30,
+        )
+        return resp.status_code, resp.text
+    except Exception as e:
+        return None, str(e)
 
 # ============================================================
 # GRADE MODEL
@@ -642,7 +662,6 @@ def build_analysis_notes(corner_count_used: int, used_surface_fallback: bool, us
     notes.append(f"corner_count={corner_count_used}")
     return ", ".join(notes)
 
-
 # ============================================================
 # ACCESS + GUIDE
 # ============================================================
@@ -658,6 +677,17 @@ st.markdown("""
     <div>• Use manual centering</div>
 </div>
 """, unsafe_allow_html=True)
+
+st.markdown("## Email Test")
+if st.button("Send Test Email"):
+    if not user_email:
+        st.error("Enter your email first")
+    else:
+        status, response = send_test_email(user_email)
+        if status == 200:
+            st.success("Test email sent successfully")
+        else:
+            st.error(f"Email failed: {response}")
 
 if user_email:
     user_check = requests.get(
@@ -1014,7 +1044,6 @@ if st.button("Run Analysis"):
 if st.session_state.analysis_complete and st.session_state.analysis_payload is not None:
     result = st.session_state.analysis_payload
 
-    # Duplicate warning
     if user_role == "admin":
         try:
             dup_resp = requests.get(
@@ -1217,14 +1246,17 @@ if user_role == "admin":
 
     st.write("Total:", len(df))
 
-    # Analytics
     st.markdown("### Version Analytics")
     if not df.empty:
         a1, a2 = st.columns(2)
         with a1:
             if "model_version" in df.columns:
                 st.write("Rows by Version")
-                st.dataframe(df["model_version"].value_counts(dropna=False).rename_axis("model_version").reset_index(name="count"), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df["model_version"].value_counts(dropna=False).rename_axis("model_version").reset_index(name="count"),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
             if "submit_label" in df.columns and "model_version" in df.columns:
                 submit_breakdown = df.pivot_table(index="model_version", columns="submit_label", aggfunc="size", fill_value=0)
@@ -1260,7 +1292,6 @@ if user_role == "admin":
                 st.write("PSA Match Stats by Version")
                 st.dataframe(per_ver, use_container_width=True, hide_index=True)
 
-    # Filters
     st.markdown("### Filters")
     filtered_df = df.copy()
 
@@ -1292,7 +1323,6 @@ if user_role == "admin":
 
     st.write("Filtered Total:", len(filtered_df))
 
-    # Dashboard table
     show_cols = [
         "created_at", "submitted_by", "model_version", "player_name", "manufacturer",
         "calibrated_grade", "confidence_percent", "submit_label", "corner_count_used",
@@ -1302,7 +1332,6 @@ if user_role == "admin":
     if len(show_cols):
         st.dataframe(filtered_df[show_cols], use_container_width=True, hide_index=True)
 
-    # Export
     if not filtered_df.empty:
         st.download_button(
             "Download Filtered CSV",
