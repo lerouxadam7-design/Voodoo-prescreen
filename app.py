@@ -733,7 +733,7 @@ else:
     st.stop()
 
 # ============================================================
-# NEW: USER SUBMISSION DATA PREVIEW
+# USER SUBMISSION DATA PREVIEW
 # ============================================================
 
 st.markdown("## My Submission Data")
@@ -1349,11 +1349,6 @@ if user_role == "admin":
         only_manual = st.checkbox("Only Manual Centering")
 
     if version_filter != "All" and "model_version" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["model_version"] == version_filter]
-    if submit_filter != "All" and "submit_label" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["submit_label"] == submit_filter]
-    if submitter_filter != "All" and "submitted_by
-        if version_filter != "All" and "model_version" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["model_version"] == version_filter]
     if submit_filter != "All" and "submit_label" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["submit_label"] == submit_filter]
