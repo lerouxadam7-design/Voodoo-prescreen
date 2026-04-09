@@ -1353,3 +1353,182 @@ if user_role == "admin":
     if submit_filter != "All" and "submit_label" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["submit_label"] == submit_filter]
     if submitter_filter != "All" and "submitted_by
+        if version_filter != "All" and "model_version" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["model_version"] == version_filter]
+    if submit_filter != "All" and "submit_label" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["submit_label"] == submit_filter]
+    if submitter_filter != "All" and "submitted_by" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["submitted_by"] == submitter_filter]
+    if only_psa and "psa_actual_grade" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["psa_actual_grade"].notna()]
+    if only_manual and "manual_centering_used" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["manual_centering_used"] == True]
+
+    st.write("Filtered Total:", len(filtered_df))
+
+    show_cols = [
+        "created_at",
+        "submitted_by",
+        "model_version",
+        "player_name",
+        "manufacturer",
+        "calibrated_grade",
+        "confidence_percent",
+        "submit_label",
+        "corner_count_used",
+        "used_surface_fallback",
+        "front_image_url",
+        "card_id",
+    ]
+    show_cols = [c for c in show_cols if c in filtered_df.columns]
+
+    if len(show_cols):
+        st.dataframe(filtered_df[show_cols], use_container_width=True, hide_index=True)
+
+    if not filtered_df.empty:
+        st.download_button(
+            "Download Filtered CSV",
+            data=csv_download_bytes(filtered_df),
+            file_name=f"voodoo_submissions_{MODEL_VERSION}.csv",
+            mime="text/csv",
+        )
+
+    st.markdown("---")
+    st.markdown("## Model Maintenance")
+
+    if st.button("Re-Score All Cards"):
+        progress = st.progress(0)
+        status_box = st.empty()
+        total_rows = len(df)
+
+        for idx, (_, row) in enumerate(df.iterrows(), start=1):
+            if pd.isna(row.get("horizontal_ratio")) or pd.isna(row.get("vertical_ratio")):
+                progress.progress(idx / max(total_rows, 1))
+                continue
+
+            row_surface = row.get("surface_score")
+            row_scratch = row.get("scratch_score")
+            row_speckle = row.get("speckle_score")
+            row_gloss = row.get("gloss_score")
+
+            if pd.isna(row_surface):
+                fetched_surface, fetched_scratch, fetched_speckle, fetched_gloss = backfill_surface_from_url(
+                    row.get("front_image_url")
+                )
+                if fetched_surface is not None:
+                    row_surface = fetched_surface
+                    row_scratch = fetched_scratch
+                    row_speckle = fetched_speckle
+                    row_gloss = fetched_gloss
+
+            used_surface_fallback = False
+            calc_surface = row_surface
+            if pd.isna(calc_surface):
+                calc_surface = 0.12
+                used_surface_fallback = True
+
+            corner_count_used = 2
+            if "corner_count_used" in row.index and not pd.isna(row.get("corner_count_used")):
+                corner_count_used = int(row.get("corner_count_used"))
+
+            new_grade = compute_grade(
+                float(row["horizontal_ratio"]),
+                float(row["vertical_ratio"]),
+                float(row["edge_score"]),
+                float(row["corner_score"]),
+                float(calc_surface),
+            )
+
+            confidence = compute_confidence(
+                h=float(row["horizontal_ratio"]),
+                v=float(row["vertical_ratio"]),
+                edge=float(row["edge_score"]),
+                corner=float(row["corner_score"]),
+                surface=float(calc_surface),
+                used_surface_fallback=used_surface_fallback,
+                corner_count=corner_count_used,
+            )
+
+            submit = compute_submit_probability(
+                grade=new_grade,
+                confidence_score=confidence["confidence_score"],
+                surface=float(calc_surface),
+                band_spread=confidence["band_spread"],
+            )
+
+            new_card_id = str(uuid.uuid4())
+
+            new_data = {
+                "card_id": new_card_id,
+                "model_version": MODEL_VERSION,
+                "player_name": json_safe(row.get("player_name")),
+                "manufacturer": json_safe(row.get("manufacturer")),
+                "stock_type": json_safe(row.get("stock_type")),
+                "psa_is_graded": json_safe(row.get("psa_is_graded")),
+                "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
+                "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
+                "vertical_ratio": json_safe(row.get("vertical_ratio")),
+                "edge_score": json_safe(row.get("edge_score")),
+                "corner_score": json_safe(row.get("corner_score")),
+                "surface_score": json_safe(row_surface),
+                "scratch_score": json_safe(row_scratch),
+                "speckle_score": json_safe(row_speckle),
+                "gloss_score": json_safe(row_gloss),
+                "calibrated_grade": json_safe(new_grade),
+                "confidence_score": json_safe(confidence["confidence_score"]),
+                "confidence_percent": json_safe(confidence["confidence_percent"]),
+                "confidence_label": json_safe(confidence["confidence_label"]),
+                "agreement_score": json_safe(confidence["agreement_score"]),
+                "threshold_score": json_safe(confidence["threshold_score"]),
+                "data_score": json_safe(confidence["data_score"]),
+                "band_spread": json_safe(confidence["band_spread"]),
+                "submit_probability": json_safe(submit["submit_probability"]),
+                "submit_percent": json_safe(submit["submit_percent"]),
+                "submit_label": json_safe(submit["submit_label"]),
+                "front_image_url": json_safe(row.get("front_image_url")),
+                "back_image_url": json_safe(row.get("back_image_url")),
+                "submitted_by": user_email,
+                "created_at": str(datetime.now()),
+                "manual_centering_used": json_safe(row.get("manual_centering_used")),
+                "front_left_measurement": json_safe(row.get("front_left_measurement")),
+                "front_right_measurement": json_safe(row.get("front_right_measurement")),
+                "front_top_measurement": json_safe(row.get("front_top_measurement")),
+                "front_bottom_measurement": json_safe(row.get("front_bottom_measurement")),
+                "front_horizontal_ratio_manual": json_safe(row.get("front_horizontal_ratio_manual")),
+                "front_vertical_ratio_manual": json_safe(row.get("front_vertical_ratio_manual")),
+                "corner_count_used": json_safe(corner_count_used),
+                "used_surface_fallback": json_safe(used_surface_fallback),
+                "analysis_success": True,
+                "analysis_notes": json_safe(
+                    build_analysis_notes(
+                        corner_count_used,
+                        used_surface_fallback,
+                        bool(row.get("manual_centering_used")),
+                    )
+                ),
+                "front_image_hash": json_safe(row.get("front_image_hash")),
+            }
+
+            try:
+                post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
+                if post_resp.status_code not in [200, 201]:
+                    status_box.warning(
+                        f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}"
+                    )
+            except Exception as e:
+                status_box.warning(
+                    f"Post exception for source card_id {row.get('card_id')}: {e}"
+                )
+
+            status_box.write(
+                f"Processed {idx}/{total_rows} | "
+                f"source_card_id={row.get('card_id')} | "
+                f"new_card_id={new_card_id} | "
+                f"grade={new_grade} | "
+                f"confidence={confidence['confidence_percent']:.1f}% | "
+                f"submit={submit['submit_percent']:.1f}% "
+                f"({submit['submit_label']})"
+            )
+            progress.progress(idx / max(total_rows, 1))
+
+        st.success("Re-scored and created new submissions.")
