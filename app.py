@@ -1,6 +1,5 @@
 import base64
 import io
-import json
 import uuid
 from datetime import datetime
 
@@ -116,7 +115,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.3-player-candidates"
+MODEL_VERSION = "v9.7.4-manual-player-name"
 st.write("RUNNING VERSION:", MODEL_VERSION)
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -154,12 +153,6 @@ if "analysis_front_bytes" not in st.session_state:
 
 if "analysis_back_bytes" not in st.session_state:
     st.session_state.analysis_back_bytes = None
-
-if "player_name_edit" not in st.session_state:
-    st.session_state.player_name_edit = ""
-
-if "player_candidate_choice" not in st.session_state:
-    st.session_state.player_candidate_choice = "Manual Entry"
 
 # ============================================================
 # HELPERS
@@ -268,70 +261,6 @@ def edge_subgrade(edge: float) -> float:
 
 def surface_subgrade(surface: float) -> float:
     return surface_grade_band(surface)
-
-
-def normalize_candidate_name(name):
-    if name is None:
-        return None
-    cleaned = str(name).strip()
-    return cleaned if cleaned else None
-
-
-def normalize_player_candidates(candidates):
-    normalized = []
-    seen = set()
-
-    if not isinstance(candidates, list):
-        return normalized
-
-    for item in candidates:
-        if isinstance(item, dict):
-            name = normalize_candidate_name(item.get("name"))
-            confidence = item.get("confidence")
-            source = item.get("source")
-        else:
-            name = normalize_candidate_name(item)
-            confidence = None
-            source = None
-
-        if not name:
-            continue
-
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-
-        normalized.append({
-            "name": name,
-            "confidence": confidence,
-            "source": source,
-        })
-
-    return normalized
-
-
-def candidate_display_label(candidate):
-    name = candidate.get("name") or ""
-    confidence = candidate.get("confidence")
-    source = candidate.get("source")
-
-    label = name
-    extras = []
-
-    if confidence is not None:
-        try:
-            extras.append(f"{round(float(confidence) * 100, 1)}%")
-        except Exception:
-            pass
-
-    if source:
-        extras.append(str(source))
-
-    if extras:
-        label += " — " + " | ".join(extras)
-
-    return label
 
 
 # ============================================================
@@ -529,63 +458,6 @@ def compute_submit_probability(
         "submit_percent": round(probability * 100, 1),
         "submit_label": label,
     }
-
-
-# ============================================================
-# PLAYER NAME DETECTION
-# ============================================================
-
-def detect_player_name(front_bytes: bytes) -> dict:
-    default_payload = {
-        "player_name": None,
-        "player_name_confidence": None,
-        "player_name_source": "unavailable",
-        "player_candidates": [],
-        "debug": None,
-    }
-
-    try:
-        resp = requests.post(
-            f"{API_BASE}/extract_card_metadata",
-            files={"file": ("front.jpg", front_bytes, "image/jpeg")},
-            timeout=60,
-        )
-
-        if resp.status_code != 200:
-            return default_payload
-
-        data = resp.json()
-        if "error" in data:
-            return {
-                **default_payload,
-                "player_name_source": "error",
-                "debug": data,
-            }
-
-        player_name = data.get("player_name")
-        player_name_confidence = data.get("player_name_confidence")
-        player_name_source = data.get("player_name_source", "vision")
-        player_candidates = normalize_player_candidates(data.get("player_candidates", []))
-        debug = data.get("debug")
-
-        if player_name:
-            existing_names = {c["name"].lower() for c in player_candidates}
-            if str(player_name).strip().lower() not in existing_names:
-                player_candidates.insert(0, {
-                    "name": str(player_name).strip(),
-                    "confidence": player_name_confidence,
-                    "source": player_name_source,
-                })
-
-        return {
-            "player_name": player_name,
-            "player_name_confidence": player_name_confidence,
-            "player_name_source": player_name_source,
-            "player_candidates": player_candidates,
-            "debug": debug,
-        }
-    except Exception:
-        return default_payload
 
 
 # ============================================================
@@ -818,8 +690,6 @@ def reset_analysis_state():
     st.session_state.analysis_payload = None
     st.session_state.analysis_front_bytes = None
     st.session_state.analysis_back_bytes = None
-    st.session_state.player_name_edit = ""
-    st.session_state.player_candidate_choice = "Manual Entry"
     st.session_state.last_save_success = False
 
 
@@ -864,6 +734,7 @@ else:
 # ============================================================
 
 st.markdown("## Card Information")
+player_name = st.text_input("Player Name (Optional)")
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
@@ -1132,20 +1003,6 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
-    player_meta = detect_player_name(front_bytes)
-    detected_player_name = player_meta.get("player_name")
-    detected_player_confidence = player_meta.get("player_name_confidence")
-    detected_player_source = player_meta.get("player_name_source")
-    detected_player_candidates = normalize_player_candidates(player_meta.get("player_candidates", []))
-    player_debug = player_meta.get("debug")
-
-    if detected_player_name:
-        st.session_state.player_name_edit = detected_player_name
-    else:
-        st.session_state.player_name_edit = ""
-
-    st.session_state.player_candidate_choice = "Manual Entry"
-
     grade = compute_grade(h, v, edge, corner, float(surface))
     base_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
 
@@ -1176,6 +1033,7 @@ if st.button("Run Analysis"):
     st.session_state.analysis_payload = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
+        "player_name": player_name,
         "psa_is_graded": psa_is_graded,
         "psa_actual_grade": psa_actual_grade,
         "use_manual_centering": use_manual_centering,
@@ -1200,11 +1058,6 @@ if st.button("Run Analysis"):
         "confidence": confidence,
         "submit": submit,
         "preview_img": preview_img,
-        "detected_player_name": detected_player_name,
-        "detected_player_confidence": detected_player_confidence,
-        "detected_player_source": detected_player_source,
-        "detected_player_candidates": detected_player_candidates,
-        "player_debug": player_debug,
         "corner_count": len(corner_scores),
     }
     st.session_state.analysis_front_bytes = front_bytes
@@ -1217,68 +1070,6 @@ if st.button("Run Analysis"):
 
 if st.session_state.analysis_complete and st.session_state.analysis_payload is not None:
     result = st.session_state.analysis_payload
-
-    detected_player_name = result["detected_player_name"]
-    detected_player_confidence = result["detected_player_confidence"]
-    detected_player_source = result["detected_player_source"]
-    detected_player_candidates = result.get("detected_player_candidates", [])
-    player_debug = result.get("player_debug")
-
-    st.markdown("### Player Name")
-    if detected_player_name:
-        msg = f"Detected player: {detected_player_name}"
-        if detected_player_confidence is not None:
-            msg += f" ({round(float(detected_player_confidence) * 100, 1)}%)"
-        if detected_player_source:
-            msg += f" [{detected_player_source}]"
-        st.write(msg)
-    else:
-        st.write("Detected player: Not found")
-
-    if detected_player_candidates:
-        candidate_labels = ["Manual Entry"] + [candidate_display_label(c) for c in detected_player_candidates]
-        selected_label = st.selectbox(
-            "Detected Candidates",
-            options=candidate_labels,
-            key="player_candidate_choice",
-            help="Choose a detected candidate or leave on Manual Entry.",
-        )
-
-        if selected_label != "Manual Entry":
-            selected_index = candidate_labels.index(selected_label) - 1
-            chosen_candidate = detected_player_candidates[selected_index]
-            chosen_name = chosen_candidate.get("name") or ""
-            if chosen_name and st.session_state.player_name_edit != chosen_name:
-                st.session_state.player_name_edit = chosen_name
-
-    st.text_input(
-        "Player Name (edit or confirm before save)",
-        key="player_name_edit"
-    )
-
-    final_player_name = st.session_state.player_name_edit.strip() if st.session_state.player_name_edit else None
-    raw_detected_player_name = detected_player_name.strip() if isinstance(detected_player_name, str) and detected_player_name.strip() else None
-
-    candidate_name_set = {c["name"].strip().lower() for c in detected_player_candidates if c.get("name")}
-    was_overridden = False
-    final_player_name_source = detected_player_source
-    final_player_name_confidence = detected_player_confidence if raw_detected_player_name else None
-
-    if final_player_name:
-        final_norm = final_player_name.lower()
-        raw_norm = raw_detected_player_name.lower() if raw_detected_player_name else None
-
-        if raw_norm and final_norm == raw_norm:
-            final_player_name_source = detected_player_source
-        elif final_norm in candidate_name_set:
-            final_player_name_source = "candidate_selected"
-            was_overridden = True
-        else:
-            final_player_name_source = "manual_override"
-            was_overridden = True
-    else:
-        if raw_detected_player_name:
-            was_overridden = True
 
     if result["preview_img"] is not None:
         st.markdown("### Card Preview")
@@ -1369,19 +1160,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         payload = {
             "card_id": card_id,
             "model_version": MODEL_VERSION,
+            "player_name": json_safe(result["player_name"].strip() if isinstance(result["player_name"], str) else result["player_name"]),
             "manufacturer": json_safe(manufacturer),
             "stock_type": json_safe(stock_type),
             "psa_is_graded": json_safe(psa_is_graded),
             "psa_actual_grade": json_safe(psa_actual_grade),
-
-            "player_name": json_safe(final_player_name),
-            "player_name_final": json_safe(final_player_name),
-            "player_name_raw_detected": json_safe(raw_detected_player_name),
-            "player_name_confidence": json_safe(final_player_name_confidence),
-            "player_name_source": json_safe(final_player_name_source),
-            "player_name_was_overridden": json_safe(was_overridden),
-            "player_candidates_json": json_safe(json.dumps(detected_player_candidates)),
-
             "horizontal_ratio": json_safe(result["horizontal_ratio"]),
             "vertical_ratio": json_safe(result["vertical_ratio"]),
             "edge_score": json_safe(result["edge_score"]),
@@ -1418,12 +1201,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             with st.expander("Debug"):
                 st.write("DEBUG surface response:", result["surface_data"] if result["surface_data"] is not None else "no surface_data")
                 st.write("DEBUG surface final:", result["surface_score"])
-                st.write("DEBUG detected player:", detected_player_name)
-                st.write("DEBUG player source:", detected_player_source)
-                st.write("DEBUG player candidates:", detected_player_candidates)
-                st.write("DEBUG player debug:", player_debug)
-                st.write("DEBUG final player:", final_player_name)
-                st.write("DEBUG player overridden:", was_overridden)
+                st.write("DEBUG payload player_name:", payload["player_name"])
                 st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
                 st.write("DEBUG payload submit_percent:", payload["submit_percent"])
                 st.write("DEBUG payload submit_label:", payload["submit_label"])
@@ -1529,19 +1307,11 @@ if user_role == "admin":
             new_data = {
                 "card_id": new_card_id,
                 "model_version": MODEL_VERSION,
+                "player_name": json_safe(row.get("player_name")),
                 "manufacturer": json_safe(row.get("manufacturer")),
                 "stock_type": json_safe(row.get("stock_type")),
                 "psa_is_graded": json_safe(row.get("psa_is_graded")),
                 "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
-
-                "player_name": json_safe(row.get("player_name_final") or row.get("player_name")),
-                "player_name_final": json_safe(row.get("player_name_final") or row.get("player_name")),
-                "player_name_raw_detected": json_safe(row.get("player_name_raw_detected")),
-                "player_name_confidence": json_safe(row.get("player_name_confidence")),
-                "player_name_source": json_safe(row.get("player_name_source")),
-                "player_name_was_overridden": json_safe(row.get("player_name_was_overridden")),
-                "player_candidates_json": json_safe(row.get("player_candidates_json")),
-
                 "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
                 "vertical_ratio": json_safe(row.get("vertical_ratio")),
                 "edge_score": json_safe(row.get("edge_score")),
