@@ -125,7 +125,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.5-step5-user-data-preview"
+MODEL_VERSION = "v9.7.5-user-csv-download"
 PRODUCTION_STATUS = "Current production model"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -315,6 +315,33 @@ def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    preferred_cols = [
+        "created_at",
+        "card_id",
+        "player_name",
+        "manufacturer",
+        "stock_type",
+        "calibrated_grade",
+        "confidence_percent",
+        "confidence_label",
+        "submit_label",
+        "submit_percent",
+        "horizontal_ratio",
+        "vertical_ratio",
+        "corner_score",
+        "edge_score",
+        "surface_score",
+        "front_image_url",
+        "back_image_url",
+    ]
+
+    export_cols = [c for c in preferred_cols if c in df.columns]
+    return df[export_cols].copy()
+
 # ============================================================
 # GRADE MODEL
 # ============================================================
@@ -367,7 +394,6 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
     return compute_fitted_grade(h, v, corner, edge, surface)
-
 
 # ============================================================
 # CONFIDENCE
@@ -458,7 +484,6 @@ def compute_confidence(h: float, v: float, edge: float, corner: float, surface: 
         "surface_band": surface_band,
     }
 
-
 # ============================================================
 # SUBMIT LOGIC
 # ============================================================
@@ -484,7 +509,6 @@ def compute_submit_probability(grade: float, confidence_score: float, surface: f
         "submit_percent": round(probability * 100, 1),
         "submit_label": label,
     }
-
 
 # ============================================================
 # UI HELPERS
@@ -685,7 +709,6 @@ def build_analysis_notes(corner_count_used: int, used_surface_fallback: bool, us
     notes.append(f"corner_count={corner_count_used}")
     return ", ".join(notes)
 
-
 # ============================================================
 # ACCESS + GUIDE
 # ============================================================
@@ -733,18 +756,29 @@ else:
     st.stop()
 
 # ============================================================
-# USER SUBMISSION DATA PREVIEW
+# USER SUBMISSION DATA PREVIEW + DOWNLOAD
 # ============================================================
 
 st.markdown("## My Submission Data")
+
 if st.button("Load My Submission Data"):
     user_df = get_user_submissions(user_email)
 
     if user_df.empty:
         st.warning("No submissions found for this email.")
     else:
-        st.success(f"Found {len(user_df)} submission(s).")
-        st.dataframe(user_df, use_container_width=True, hide_index=True)
+        export_df = build_user_export_df(user_df)
+
+        st.success(f"Found {len(export_df)} submission(s).")
+        st.dataframe(export_df, use_container_width=True, hide_index=True)
+
+        safe_email = user_email.replace("@", "_at_").replace(".", "_")
+        st.download_button(
+            "Download My CSV",
+            data=csv_download_bytes(export_df),
+            file_name=f"voodoo_submissions_{safe_email}.csv",
+            mime="text/csv",
+        )
 
 # ============================================================
 # CARD INFO
