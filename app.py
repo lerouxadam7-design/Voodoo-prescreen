@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image, ImageDraw
+from PIL import Image
 
 # ============================================================
 # DESIGN THEME
@@ -85,12 +85,6 @@ tbody tr td {
     font-size: 0.9rem;
     margin-bottom: 0.15rem;
 }
-.preview-card {
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 10px;
-    padding: 0.5rem;
-    background: rgba(255,255,255,0.03);
-}
 .guide-box {
     border: 1px solid rgba(255,255,255,0.22);
     border-radius: 10px;
@@ -111,6 +105,14 @@ tbody tr td {
     color: #fca5a5;
     font-weight: 700;
 }
+.info-box {
+    border: 1px solid rgba(255,255,255,0.20);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -120,7 +122,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.2-locked-true-centering-overlay"
+MODEL_VERSION = "v10.3-locked-preview-disabled"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -507,7 +509,6 @@ def compute_confidence(
         data_score -= 0.08 * glare_norm
 
     data_score -= stock_confidence_adjustment(stock_type, glare_fraction, gloss_score)
-
     data_score = max(0.0, min(1.0, data_score))
 
     boundary_dist = grade_boundary_distance(grade)
@@ -607,74 +608,6 @@ def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y:
     </div>
     """
     components.html(html, height=height + 8, width=width + 8, scrolling=False)
-
-
-def build_card_preview_with_overlay(
-    image_bytes: bytes,
-    horizontal_ratio: float = None,
-    vertical_ratio: float = None,
-    inner_left_x: float = None,
-    inner_right_x: float = None,
-    inner_top_y: float = None,
-    inner_bottom_y: float = None,
-    source_image_width: float = None,
-    source_image_height: float = None,
-    max_width: int = 320
-):
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except Exception:
-        return None
-
-    scale = min(1.0, max_width / img.width)
-    new_size = (int(img.width * scale), int(img.height * scale))
-    preview = img.resize(new_size)
-    draw = ImageDraw.Draw(preview)
-
-    w, h = preview.size
-
-    have_true_coords = all(
-        v is not None for v in [inner_left_x, inner_right_x, inner_top_y, inner_bottom_y, source_image_width, source_image_height]
-    )
-
-    if have_true_coords:
-        sx = w / float(source_image_width)
-        sy = h / float(source_image_height)
-
-        lx = int(float(inner_left_x) * sx)
-        rx = int(float(inner_right_x) * sx)
-        ty = int(float(inner_top_y) * sy)
-        by = int(float(inner_bottom_y) * sy)
-
-        if 0 <= lx <= w and 0 <= rx <= w and rx > lx:
-            draw.line([(lx, 0), (lx, h)], fill=(0, 255, 0), width=2)
-            draw.line([(rx, 0), (rx, h)], fill=(0, 255, 0), width=2)
-
-        if 0 <= ty <= h and 0 <= by <= h and by > ty:
-            draw.line([(0, ty), (w, ty)], fill=(0, 255, 0), width=2)
-            draw.line([(0, by), (w, by)], fill=(0, 255, 0), width=2)
-
-        return preview
-
-    if horizontal_ratio is not None and 0 < float(horizontal_ratio) <= 1:
-        r = float(horizontal_ratio)
-        left_prop = r / (1 + r)
-        right_prop = 1 / (1 + r)
-        left_x = int(w * left_prop)
-        right_x = int(w * right_prop)
-        draw.line([(left_x, 0), (left_x, h)], fill=(0, 255, 0), width=2)
-        draw.line([(right_x, 0), (right_x, h)], fill=(0, 255, 0), width=2)
-
-    if vertical_ratio is not None and 0 < float(vertical_ratio) <= 1:
-        r = float(vertical_ratio)
-        top_prop = r / (1 + r)
-        bottom_prop = 1 / (1 + r)
-        top_y = int(h * top_prop)
-        bottom_y = int(h * bottom_prop)
-        draw.line([(0, top_y), (w, top_y)], fill=(0, 255, 0), width=2)
-        draw.line([(0, bottom_y), (w, bottom_y)], fill=(0, 255, 0), width=2)
-
-    return preview
 
 
 def backfill_surface_from_url(front_image_url: str):
@@ -833,7 +766,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    <div>• Use solid black contrasting background for pictures</div>
+    <div>• Use solid black contrasting background</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -1098,13 +1031,6 @@ if st.button("Run Analysis"):
     v = data["vertical_ratio"]
     edge = data["edge_score"]
 
-    inner_left_x = data.get("inner_left_x")
-    inner_right_x = data.get("inner_right_x")
-    inner_top_y = data.get("inner_top_y")
-    inner_bottom_y = data.get("inner_bottom_y")
-    source_image_width = data.get("image_width")
-    source_image_height = data.get("image_height")
-
     if use_manual_centering and manual_h_ratio is not None and manual_v_ratio is not None:
         h = manual_h_ratio
         v = manual_v_ratio
@@ -1217,19 +1143,6 @@ if st.button("Run Analysis"):
         band_spread=confidence["band_spread"],
     )
 
-    preview_img = build_card_preview_with_overlay(
-        image_bytes=front_bytes,
-        horizontal_ratio=h,
-        vertical_ratio=v,
-        inner_left_x=inner_left_x,
-        inner_right_x=inner_right_x,
-        inner_top_y=inner_top_y,
-        inner_bottom_y=inner_bottom_y,
-        source_image_width=source_image_width,
-        source_image_height=source_image_height,
-        max_width=320
-    )
-
     frozen_payload = {
         "player_name": player_name,
         "manufacturer": manufacturer,
@@ -1253,19 +1166,12 @@ if st.button("Run Analysis"):
         "gloss_score": gloss_score,
         "glare_fraction": glare_fraction,
         "valid_surface_fraction": valid_surface_fraction,
-        "inner_left_x": inner_left_x,
-        "inner_right_x": inner_right_x,
-        "inner_top_y": inner_top_y,
-        "inner_bottom_y": inner_bottom_y,
-        "source_image_width": source_image_width,
-        "source_image_height": source_image_height,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
         "base_fitted_grade": grade,
         "grade": grade,
         "confidence": confidence,
         "submit": submit,
-        "preview_img": preview_img,
         "corner_count_used": len(corner_scores),
         "analysis_success": True,
         "analysis_notes": build_analysis_notes(len(corner_scores), used_surface_fallback, use_manual_centering),
@@ -1299,11 +1205,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         except Exception:
             pass
 
-    if result["preview_img"] is not None:
-        st.markdown("### Card Preview")
-        st.markdown('<div class="preview-card">', unsafe_allow_html=True)
-        st.image(result["preview_img"], caption="Preview with detected centering overlay lines", use_container_width=False)
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class="info-box">
+        Automatic card preview overlay has been disabled. Auto centering still runs in the backend, and manual centering remains available above.
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("## Grade")
     st.markdown(f"### {result['grade']}")
@@ -1370,14 +1276,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             st.write("Glare Fraction:", round(float(result["glare_fraction"]), 4))
         if result["valid_surface_fraction"] is not None:
             st.write("Valid Surface Fraction:", round(float(result["valid_surface_fraction"]), 4))
-        if result["inner_left_x"] is not None:
-            st.write("Detected Left X:", result["inner_left_x"])
-        if result["inner_right_x"] is not None:
-            st.write("Detected Right X:", result["inner_right_x"])
-        if result["inner_top_y"] is not None:
-            st.write("Detected Top Y:", result["inner_top_y"])
-        if result["inner_bottom_y"] is not None:
-            st.write("Detected Bottom Y:", result["inner_bottom_y"])
 
     if st.button("Save Submission"):
         front_bytes = st.session_state.analysis_front_bytes
@@ -1462,17 +1360,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
 
         if user_role == "admin":
             with st.expander("Debug"):
-                st.write("DEBUG analyze response coordinates:", {
-                    "inner_left_x": result["inner_left_x"],
-                    "inner_right_x": result["inner_right_x"],
-                    "inner_top_y": result["inner_top_y"],
-                    "inner_bottom_y": result["inner_bottom_y"],
-                    "source_image_width": result["source_image_width"],
-                    "source_image_height": result["source_image_height"],
-                })
                 st.write("DEBUG surface response:", result["surface_data"] if result["surface_data"] is not None else "no surface_data")
+                st.write("DEBUG payload player_name:", payload["player_name"])
                 st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
                 st.write("DEBUG payload submit_percent:", payload["submit_percent"])
+                st.write("DEBUG payload submit_label:", payload["submit_label"])
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
 
