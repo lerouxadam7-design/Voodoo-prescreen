@@ -723,7 +723,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-</div>
+    <div>• Use solid contrasting background for pictures</div>
 """, unsafe_allow_html=True)
 
 if user_email:
