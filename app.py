@@ -120,8 +120,8 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.7.7-surface-softened-option-c"
-PRODUCTION_STATUS = "Current production model"
+MODEL_VERSION = "v10.0-locked"
+PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -341,6 +341,12 @@ def compute_fitted_grade(
         + 32.0 * surface_bad
         - 300.0 * (surface_bad ** 2)
     )
+
+    # Final locked curve shaping tweak
+    if grade >= 9.0:
+        grade += 0.15
+    elif grade <= 7.5:
+        grade -= 0.15
 
     return round(max(1.0, min(10.0, grade)), 2)
 
@@ -645,8 +651,11 @@ def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: 
     st.write("Band Spread:", confidence["band_spread"])
 
     st.markdown("### Fitted Formula Output")
-    st.write("Base Fitted Grade:", caps["base_fitted_grade"])
     st.write("Predicted Grade:", caps["candidate_grade"])
+    st.write("Centering Band:", caps["centering_cap"])
+    st.write("Corner Band:", caps["corner_cap"])
+    st.write("Edge Band:", caps["edge_cap"])
+    st.write("Surface Band:", caps["surface_cap"])
 
 
 def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: float, surface: float, confidence: dict, submit: dict) -> None:
@@ -714,7 +723,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    </div>
+</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -723,6 +732,7 @@ if user_email:
         headers=headers,
         timeout=30,
     )
+
     if user_check.status_code != 200:
         st.error("User lookup failed")
         st.stop()
@@ -789,20 +799,53 @@ with clear_col:
         st.rerun()
 
 st.markdown('<div class="upload-title">Front Image</div>', unsafe_allow_html=True)
-full_card_front = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"front_{st.session_state.upload_key}", label_visibility="collapsed")
+full_card_front = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"front_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
 
 st.markdown('<div class="upload-title">Back Image</div>', unsafe_allow_html=True)
-full_card_back = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"back_{st.session_state.upload_key}", label_visibility="collapsed")
+full_card_back = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"back_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
 
 st.markdown("### Corner Images (2 Required)")
 st.markdown('<div class="upload-title">Corner 1</div>', unsafe_allow_html=True)
-corner1 = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"c1_{st.session_state.upload_key}", label_visibility="collapsed")
+corner1 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c1_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
 st.markdown('<div class="upload-title">Corner 2</div>', unsafe_allow_html=True)
-corner2 = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"c2_{st.session_state.upload_key}", label_visibility="collapsed")
+corner2 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c2_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
 st.markdown('<div class="upload-title">Corner 3 (Optional)</div>', unsafe_allow_html=True)
-corner3 = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"c3_{st.session_state.upload_key}", label_visibility="collapsed")
+corner3 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c3_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
+
 st.markdown('<div class="upload-title">Corner 4 (Optional)</div>', unsafe_allow_html=True)
-corner4 = st.file_uploader("", ["jpg", "jpeg", "png"], key=f"c4_{st.session_state.upload_key}", label_visibility="collapsed")
+corner4 = st.file_uploader(
+    "",
+    ["jpg", "jpeg", "png"],
+    key=f"c4_{st.session_state.upload_key}",
+    label_visibility="collapsed"
+)
 
 # ============================================================
 # VALIDATION PANEL
@@ -900,12 +943,15 @@ if st.button("Run Analysis"):
     if not front_ok:
         st.error("Front image required")
         st.stop()
+
     if not back_ok:
         st.error("Back image required")
         st.stop()
+
     if not corners_ok:
         st.error("At least 2 corner images are required")
         st.stop()
+
     if use_manual_centering and not manual_centering_valid:
         st.error("Manual centering values are not valid")
         st.stop()
@@ -1026,7 +1072,6 @@ if st.button("Run Analysis"):
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
     grade = compute_grade(h, v, edge, corner, float(surface))
-    base_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
 
     confidence = compute_confidence(
         h=h,
@@ -1075,7 +1120,7 @@ if st.button("Run Analysis"):
         "gloss_score": gloss_score,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
-        "base_fitted_grade": base_grade,
+        "base_fitted_grade": grade,
         "grade": grade,
         "confidence": confidence,
         "submit": submit,
