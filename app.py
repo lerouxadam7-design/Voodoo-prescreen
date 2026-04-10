@@ -120,7 +120,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.0-locked"
+MODEL_VERSION = "v10.1-locked-confidence-upgrade"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -330,7 +330,6 @@ def compute_fitted_grade(
     v_good = 1.0 - float(vertical_ratio)
     corner_bad = float(corner_score)
     edge_bad = float(edge_score)
-
     surface_bad = min(float(surface_score), 0.16)
 
     grade = (
@@ -342,7 +341,6 @@ def compute_fitted_grade(
         - 300.0 * (surface_bad ** 2)
     )
 
-    # Final locked curve shaping tweak
     if grade >= 9.0:
         grade += 0.15
     elif grade <= 7.5:
@@ -411,14 +409,57 @@ def band_distance_surface(surface: float) -> float:
     return min(abs(s - t) for t in thresholds)
 
 
+def grade_boundary_distance(grade: float) -> float:
+    boundaries = [8.6, 9.0, 9.4, 10.0]
+    return min(abs(float(grade) - b) for b in boundaries)
+
+
+def normalize_glare_fraction(glare_fraction) -> float:
+    if glare_fraction is None:
+        return 0.0
+    return float(max(0.0, min(1.0, float(glare_fraction) / 0.35)))
+
+
+def normalize_valid_surface_fraction(valid_surface_fraction) -> float:
+    if valid_surface_fraction is None:
+        return 1.0
+    return float(max(0.0, min(1.0, (float(valid_surface_fraction) - 0.35) / 0.55)))
+
+
+def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_score: float) -> float:
+    stock = (stock_type or "").lower()
+    glare_norm = normalize_glare_fraction(glare_fraction)
+    gloss = 0.0 if gloss_score is None else float(max(0.0, min(1.0, gloss_score)))
+
+    penalty = 0.0
+
+    if stock in ["chrome", "refractor", "foil"]:
+        penalty += 0.10 * glare_norm
+        penalty += 0.06 * gloss
+    elif stock == "paper":
+        penalty += 0.03 * glare_norm
+        penalty += 0.02 * gloss
+    else:
+        penalty += 0.06 * glare_norm
+        penalty += 0.04 * gloss
+
+    return penalty
+
+
 def compute_confidence(
     h: float,
     v: float,
     edge: float,
     corner: float,
     surface: float,
+    grade: float,
+    stock_type: str = "",
+    manual_centering_used: bool = False,
     used_surface_fallback: bool = False,
-    corner_count: int = 0
+    corner_count: int = 0,
+    glare_fraction: float = None,
+    valid_surface_fraction: float = None,
+    gloss_score: float = None,
 ) -> dict:
     centering_band = centering_psa_grade(h, v)
     corner_band = corner_grade_band(corner)
@@ -442,26 +483,49 @@ def compute_confidence(
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
     data_score = 1.0
+
     if used_surface_fallback:
         data_score -= 0.12
+
     if corner_count < 2:
         data_score -= 0.20
     elif corner_count == 2:
         data_score -= 0.03
+    elif corner_count >= 4:
+        data_score += 0.03
+
+    if manual_centering_used:
+        data_score += 0.04
+
+    valid_surface_norm = normalize_valid_surface_fraction(valid_surface_fraction)
+    glare_norm = normalize_glare_fraction(glare_fraction)
+
+    if valid_surface_fraction is not None:
+        data_score += 0.08 * (valid_surface_norm - 0.5)
+
+    if glare_fraction is not None:
+        data_score -= 0.08 * glare_norm
+
+    data_score -= stock_confidence_adjustment(stock_type, glare_fraction, gloss_score)
 
     data_score = max(0.0, min(1.0, data_score))
 
+    boundary_dist = grade_boundary_distance(grade)
+    boundary_score = min(1.0, boundary_dist / 0.35)
+
     confidence_raw = (
-        0.50 * agreement_score +
-        0.30 * threshold_score +
-        0.20 * data_score
+        0.38 * agreement_score +
+        0.27 * threshold_score +
+        0.25 * data_score +
+        0.10 * boundary_score
     )
+
     confidence_raw = max(0.0, min(1.0, confidence_raw))
     confidence_percent = round(confidence_raw * 100.0, 1)
 
-    if confidence_percent >= 75:
+    if confidence_percent >= 78:
         label = "High"
-    elif confidence_percent >= 55:
+    elif confidence_percent >= 58:
         label = "Moderate"
     else:
         label = "Low"
@@ -474,6 +538,9 @@ def compute_confidence(
         "threshold_score": round(threshold_score, 3),
         "data_score": round(data_score, 3),
         "band_spread": round(spread, 2),
+        "boundary_score": round(boundary_score, 3),
+        "glare_fraction_used": None if glare_fraction is None else round(float(glare_fraction), 3),
+        "valid_surface_fraction_used": None if valid_surface_fraction is None else round(float(valid_surface_fraction), 3),
         "centering_band": centering_band,
         "corner_band": corner_band,
         "edge_band": edge_band,
@@ -487,15 +554,15 @@ def compute_confidence(
 def compute_submit_probability(grade: float, confidence_score: float, surface: float, band_spread: float) -> dict:
     confidence_percent = confidence_score * 100.0
 
-    if grade >= 9.4:
+    if grade >= 9.4 and confidence_percent >= 85.0:
         label = "Strong Submit"
         probability = 0.95
-    elif grade >= 9.0:
+    elif grade >= 9.3 and confidence_percent < 85.0:
         label = "Submit"
-        probability = 0.82
-    elif 8.6 <= grade < 9.0 and confidence_percent >= 58.0:
+        probability = 0.80
+    elif 8.4 < grade < 9.3 and confidence_percent > 80.0:
         label = "Risky"
-        probability = 0.58
+        probability = 0.55
     else:
         label = "Do Not Submit"
         probability = 0.15
@@ -628,8 +695,8 @@ def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: 
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.75 else
-        "Moderate" if confidence["confidence_score"] >= 0.55 else
+        "Low" if confidence["confidence_score"] >= 0.78 else
+        "Moderate" if confidence["confidence_score"] >= 0.58 else
         "High"
     )
     st.write("Limiting Feature:", caps["limiter"])
@@ -648,7 +715,12 @@ def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: 
     st.write("Agreement Score:", confidence["agreement_score"])
     st.write("Threshold Score:", confidence["threshold_score"])
     st.write("Data Quality Score:", confidence["data_score"])
+    st.write("Boundary Score:", confidence["boundary_score"])
     st.write("Band Spread:", confidence["band_spread"])
+    if confidence.get("glare_fraction_used") is not None:
+        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
+    if confidence.get("valid_surface_fraction_used") is not None:
+        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
 
     st.markdown("### Fitted Formula Output")
     st.write("Predicted Grade:", caps["candidate_grade"])
@@ -670,10 +742,13 @@ def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: f
 
     st.markdown("## Result")
     col1, col2, col3 = st.columns(3)
+
     with col1:
         st.metric("Grade", grade)
+
     with col2:
         st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
+
     with col3:
         st.metric("Submit", submit["submit_label"])
 
@@ -723,7 +798,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    <div>• Use solid contrasting background for pictures</div>
+</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -1037,6 +1112,8 @@ if st.button("Run Analysis"):
     scratch_score = None
     speckle_score = None
     gloss_score = None
+    glare_fraction = None
+    valid_surface_fraction = None
     surface_data = None
     used_surface_fallback = False
 
@@ -1063,6 +1140,8 @@ if st.button("Run Analysis"):
             scratch_score = surface_data.get("scratch_score")
             speckle_score = surface_data.get("speckle_score")
             gloss_score = surface_data.get("gloss_score")
+            glare_fraction = surface_data.get("glare_fraction")
+            valid_surface_fraction = surface_data.get("valid_surface_fraction")
     elif sr is not None:
         st.warning(f"Surface API failed: {sr.text}")
 
@@ -1079,8 +1158,14 @@ if st.button("Run Analysis"):
         edge=edge,
         corner=corner,
         surface=float(surface),
+        grade=grade,
+        stock_type=stock_type,
+        manual_centering_used=use_manual_centering,
         used_surface_fallback=used_surface_fallback,
         corner_count=len(corner_scores),
+        glare_fraction=glare_fraction,
+        valid_surface_fraction=valid_surface_fraction,
+        gloss_score=gloss_score,
     )
 
     submit = compute_submit_probability(
@@ -1118,6 +1203,8 @@ if st.button("Run Analysis"):
         "scratch_score": scratch_score,
         "speckle_score": speckle_score,
         "gloss_score": gloss_score,
+        "glare_fraction": glare_fraction,
+        "valid_surface_fraction": valid_surface_fraction,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
         "base_fitted_grade": grade,
@@ -1225,6 +1312,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             st.write("Speckle Score:", round(float(result["speckle_score"]), 4))
         if result["gloss_score"] is not None:
             st.write("Gloss Score:", round(float(result["gloss_score"]), 4))
+        if result["glare_fraction"] is not None:
+            st.write("Glare Fraction:", round(float(result["glare_fraction"]), 4))
+        if result["valid_surface_fraction"] is not None:
+            st.write("Valid Surface Fraction:", round(float(result["valid_surface_fraction"]), 4))
 
     if st.button("Save Submission"):
         front_bytes = st.session_state.analysis_front_bytes
@@ -1501,8 +1592,14 @@ if user_role == "admin":
                 edge=float(row["edge_score"]),
                 corner=float(row["corner_score"]),
                 surface=float(calc_surface),
+                grade=float(new_grade),
+                stock_type=str(row.get("stock_type") or ""),
+                manual_centering_used=bool(row.get("manual_centering_used")),
                 used_surface_fallback=used_surface_fallback,
                 corner_count=corner_count_used,
+                glare_fraction=None,
+                valid_surface_fraction=None,
+                gloss_score=row_gloss,
             )
 
             submit = compute_submit_probability(
