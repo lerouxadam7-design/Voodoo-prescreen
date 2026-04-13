@@ -122,7 +122,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.3-locked-preview-disabled"
+MODEL_VERSION = "v10.4-locked-camera-enabled"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -318,6 +318,207 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
     export_cols = [c for c in preferred_cols if c in df.columns]
     return df[export_cols].copy()
 
+
+def pil_to_base64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
+    img_b64 = pil_to_base64(img)
+    width, height = img.size
+
+    html = f"""
+    <div style="
+        position: relative;
+        width: {width}px;
+        height: {height}px;
+        overflow: hidden;
+        border: 1px solid #666;
+        border-radius: 8px;
+    ">
+        <img
+            src="data:image/png;base64,{img_b64}"
+            style="position:absolute;top:0;left:0;width:{width}px;height:{height}px;object-fit:contain;z-index:1;"
+        />
+        <div style="position:absolute;top:0;left:{left_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:0;left:{right_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{top_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
+        <div style="position:absolute;top:{bottom_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
+    </div>
+    """
+    components.html(html, height=height + 8, width=width + 8, scrolling=False)
+
+
+def backfill_surface_from_url(front_image_url: str):
+    if not front_image_url:
+        return None, None, None, None
+
+    try:
+        img_resp = requests.get(front_image_url, timeout=60)
+        if img_resp.status_code != 200:
+            return None, None, None, None
+
+        sr = requests.post(
+            f"{API_BASE}/analyze_surface",
+            files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
+            timeout=60,
+        )
+
+        if sr.status_code != 200:
+            return None, None, None, None
+
+        surface_data = sr.json()
+        if "error" in surface_data:
+            return None, None, None, None
+
+        return (
+            surface_data.get("surface_score"),
+            surface_data.get("scratch_score"),
+            surface_data.get("speckle_score"),
+            surface_data.get("gloss_score"),
+        )
+    except Exception:
+        return None, None, None, None
+
+
+def validation_status(label: str, passed: bool):
+    text = "OK" if passed else "Missing"
+    css = "status-good" if passed else "status-bad"
+    st.markdown(f"{label}: <span class='{css}'>{text}</span>", unsafe_allow_html=True)
+
+
+def build_analysis_notes(corner_count_used: int, used_surface_fallback: bool, use_manual_centering: bool) -> str:
+    notes = []
+    if use_manual_centering:
+        notes.append("manual_centering_used")
+    if used_surface_fallback:
+        notes.append("surface_fallback_used")
+    notes.append(f"corner_count={corner_count_used}")
+    return ", ".join(notes)
+
+
+def reset_analysis_state():
+    st.session_state.analysis_complete = False
+    st.session_state.analysis_payload = None
+    st.session_state.analysis_front_bytes = None
+    st.session_state.analysis_back_bytes = None
+    st.session_state.last_save_success = False
+
+
+def get_image_input(label: str, key_prefix: str):
+    mode = st.radio(
+        f"{label} Source",
+        ["Upload", "Camera"],
+        horizontal=True,
+        key=f"{key_prefix}_mode_{st.session_state.upload_key}",
+        label_visibility="collapsed",
+    )
+    st.markdown(f'<div class="upload-title">{label}</div>', unsafe_allow_html=True)
+    if mode == "Upload":
+        file_obj = st.file_uploader(
+            "",
+            ["jpg", "jpeg", "png"],
+            key=f"{key_prefix}_upload_{st.session_state.upload_key}",
+            label_visibility="collapsed",
+        )
+    else:
+        file_obj = st.camera_input(
+            "",
+            key=f"{key_prefix}_camera_{st.session_state.upload_key}",
+            label_visibility="collapsed",
+        )
+    return file_obj, mode
+
+
+def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: float, surface: float, confidence: dict, submit: dict) -> None:
+    caps = compute_psa_caps(h, v, edge, corner, surface)
+
+    if submit["submit_label"] == "Strong Submit":
+        st.success("STRONG SUBMIT")
+    elif submit["submit_label"] == "Submit":
+        st.success("SUBMIT")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
+    else:
+        st.error("DO NOT SUBMIT")
+
+    st.markdown("### Submission Decision")
+    st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
+    st.write("Recommendation:", submit["submit_label"])
+
+    st.markdown("### Confidence")
+    st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
+    st.write("Confidence Level:", confidence["confidence_label"])
+    st.write(
+        "Risk Level:",
+        "Low" if confidence["confidence_score"] >= 0.78 else
+        "Moderate" if confidence["confidence_score"] >= 0.58 else
+        "High"
+    )
+    st.write("Limiting Feature:", caps["limiter"])
+
+    st.markdown("### Centering")
+    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+    st.write("Vertical Centering:", ratio_to_psa_centering(v))
+    st.write("Centering Grade:", centering_psa_grade(h, v))
+
+    st.markdown("### Subgrades (Out of 10)")
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
+
+    st.markdown("### Confidence Breakdown")
+    st.write("Agreement Score:", confidence["agreement_score"])
+    st.write("Threshold Score:", confidence["threshold_score"])
+    st.write("Data Quality Score:", confidence["data_score"])
+    st.write("Boundary Score:", confidence["boundary_score"])
+    st.write("Band Spread:", confidence["band_spread"])
+    if confidence.get("glare_fraction_used") is not None:
+        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
+    if confidence.get("valid_surface_fraction_used") is not None:
+        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
+
+    st.markdown("### Fitted Formula Output")
+    st.write("Predicted Grade:", caps["candidate_grade"])
+    st.write("Centering Band:", caps["centering_cap"])
+    st.write("Corner Band:", caps["corner_cap"])
+    st.write("Edge Band:", caps["edge_cap"])
+    st.write("Surface Band:", caps["surface_cap"])
+
+
+def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: float, surface: float, confidence: dict, submit: dict) -> None:
+    if submit["submit_label"] == "Strong Submit":
+        st.success("STRONG SUBMIT")
+    elif submit["submit_label"] == "Submit":
+        st.success("SUBMIT")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
+    else:
+        st.error("DO NOT SUBMIT")
+
+    st.markdown("## Result")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Grade", grade)
+
+    with col2:
+        st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
+
+    with col3:
+        st.metric("Submit", submit["submit_label"])
+
+    st.markdown("### Centering")
+    st.write("Horizontal:", ratio_to_psa_centering(h))
+    st.write("Vertical:", ratio_to_psa_centering(v))
+
+    st.markdown("### Subgrades")
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
+
 # ============================================================
 # GRADE MODEL
 # ============================================================
@@ -386,67 +587,6 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
 # ============================================================
 # CONFIDENCE
 # ============================================================
-
-def band_distance_centering(h: float, v: float) -> float:
-    worst = min(float(h), float(v))
-    thresholds = [0.70, 0.80, 0.90]
-    return min(abs(worst - t) for t in thresholds)
-
-
-def band_distance_corner(corner: float) -> float:
-    c = remap_corner_for_model(corner)
-    thresholds = [0.38, 0.46, 0.51, 0.58]
-    return min(abs(c - t) for t in thresholds)
-
-
-def band_distance_edge(edge: float) -> float:
-    e = max(0.0, min(1.0, float(edge)))
-    thresholds = [0.006, 0.012, 0.020, 0.032]
-    return min(abs(e - t) for t in thresholds)
-
-
-def band_distance_surface(surface: float) -> float:
-    s = max(0.0, min(1.0, float(surface)))
-    thresholds = [0.08, 0.10, 0.13, 0.16]
-    return min(abs(s - t) for t in thresholds)
-
-
-def grade_boundary_distance(grade: float) -> float:
-    boundaries = [8.6, 9.0, 9.4, 10.0]
-    return min(abs(float(grade) - b) for b in boundaries)
-
-
-def normalize_glare_fraction(glare_fraction) -> float:
-    if glare_fraction is None:
-        return 0.0
-    return float(max(0.0, min(1.0, float(glare_fraction) / 0.35)))
-
-
-def normalize_valid_surface_fraction(valid_surface_fraction) -> float:
-    if valid_surface_fraction is None:
-        return 1.0
-    return float(max(0.0, min(1.0, (float(valid_surface_fraction) - 0.35) / 0.55)))
-
-
-def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_score: float) -> float:
-    stock = (stock_type or "").lower()
-    glare_norm = normalize_glare_fraction(glare_fraction)
-    gloss = 0.0 if gloss_score is None else float(max(0.0, min(1.0, gloss_score)))
-
-    penalty = 0.0
-
-    if stock in ["chrome", "refractor", "foil"]:
-        penalty += 0.10 * glare_norm
-        penalty += 0.06 * gloss
-    elif stock == "paper":
-        penalty += 0.03 * glare_norm
-        penalty += 0.02 * gloss
-    else:
-        penalty += 0.06 * glare_norm
-        penalty += 0.04 * gloss
-
-    return penalty
-
 
 def compute_confidence(
     h: float,
@@ -548,6 +688,67 @@ def compute_confidence(
         "surface_band": surface_band,
     }
 
+
+def band_distance_centering(h: float, v: float) -> float:
+    worst = min(float(h), float(v))
+    thresholds = [0.70, 0.80, 0.90]
+    return min(abs(worst - t) for t in thresholds)
+
+
+def band_distance_corner(corner: float) -> float:
+    c = remap_corner_for_model(corner)
+    thresholds = [0.38, 0.46, 0.51, 0.58]
+    return min(abs(c - t) for t in thresholds)
+
+
+def band_distance_edge(edge: float) -> float:
+    e = max(0.0, min(1.0, float(edge)))
+    thresholds = [0.006, 0.012, 0.020, 0.032]
+    return min(abs(e - t) for t in thresholds)
+
+
+def band_distance_surface(surface: float) -> float:
+    s = max(0.0, min(1.0, float(surface)))
+    thresholds = [0.08, 0.10, 0.13, 0.16]
+    return min(abs(s - t) for t in thresholds)
+
+
+def grade_boundary_distance(grade: float) -> float:
+    boundaries = [8.6, 9.0, 9.4, 10.0]
+    return min(abs(float(grade) - b) for b in boundaries)
+
+
+def normalize_glare_fraction(glare_fraction) -> float:
+    if glare_fraction is None:
+        return 0.0
+    return float(max(0.0, min(1.0, float(glare_fraction) / 0.35)))
+
+
+def normalize_valid_surface_fraction(valid_surface_fraction) -> float:
+    if valid_surface_fraction is None:
+        return 1.0
+    return float(max(0.0, min(1.0, (float(valid_surface_fraction) - 0.35) / 0.55)))
+
+
+def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_score: float) -> float:
+    stock = (stock_type or "").lower()
+    glare_norm = normalize_glare_fraction(glare_fraction)
+    gloss = 0.0 if gloss_score is None else float(max(0.0, min(1.0, gloss_score)))
+
+    penalty = 0.0
+
+    if stock in ["chrome", "refractor", "foil"]:
+        penalty += 0.10 * glare_norm
+        penalty += 0.06 * gloss
+    elif stock == "paper":
+        penalty += 0.03 * glare_norm
+        penalty += 0.02 * gloss
+    else:
+        penalty += 0.06 * glare_norm
+        penalty += 0.04 * gloss
+
+    return penalty
+
 # ============================================================
 # SUBMIT LOGIC
 # ============================================================
@@ -575,185 +776,6 @@ def compute_submit_probability(grade: float, confidence_score: float, surface: f
     }
 
 # ============================================================
-# UI HELPERS
-# ============================================================
-
-def pil_to_base64(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
-    img_b64 = pil_to_base64(img)
-    width, height = img.size
-
-    html = f"""
-    <div style="
-        position: relative;
-        width: {width}px;
-        height: {height}px;
-        overflow: hidden;
-        border: 1px solid #666;
-        border-radius: 8px;
-    ">
-        <img
-            src="data:image/png;base64,{img_b64}"
-            style="position:absolute;top:0;left:0;width:{width}px;height:{height}px;object-fit:contain;z-index:1;"
-        />
-        <div style="position:absolute;top:0;left:{left_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:0;left:{right_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:{top_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
-        <div style="position:absolute;top:{bottom_y}px;left:0;width:{width}px;height:2px;background:#00FF00;z-index:2;"></div>
-    </div>
-    """
-    components.html(html, height=height + 8, width=width + 8, scrolling=False)
-
-
-def backfill_surface_from_url(front_image_url: str):
-    if not front_image_url:
-        return None, None, None, None
-
-    try:
-        img_resp = requests.get(front_image_url, timeout=60)
-        if img_resp.status_code != 200:
-            return None, None, None, None
-
-        sr = requests.post(
-            f"{API_BASE}/analyze_surface",
-            files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
-            timeout=60,
-        )
-
-        if sr.status_code != 200:
-            return None, None, None, None
-
-        surface_data = sr.json()
-        if "error" in surface_data:
-            return None, None, None, None
-
-        return (
-            surface_data.get("surface_score"),
-            surface_data.get("scratch_score"),
-            surface_data.get("speckle_score"),
-            surface_data.get("gloss_score"),
-        )
-    except Exception:
-        return None, None, None, None
-
-
-def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: float, surface: float, confidence: dict, submit: dict) -> None:
-    caps = compute_psa_caps(h, v, edge, corner, surface)
-
-    if submit["submit_label"] == "Strong Submit":
-        st.success("STRONG SUBMIT")
-    elif submit["submit_label"] == "Submit":
-        st.success("SUBMIT")
-    elif submit["submit_label"] == "Risky":
-        st.warning("RISKY")
-    else:
-        st.error("DO NOT SUBMIT")
-
-    st.markdown("### Submission Decision")
-    st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
-    st.write("Recommendation:", submit["submit_label"])
-
-    st.markdown("### Confidence")
-    st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
-    st.write("Confidence Level:", confidence["confidence_label"])
-    st.write(
-        "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.78 else
-        "Moderate" if confidence["confidence_score"] >= 0.58 else
-        "High"
-    )
-    st.write("Limiting Feature:", caps["limiter"])
-
-    st.markdown("### Centering")
-    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
-    st.write("Vertical Centering:", ratio_to_psa_centering(v))
-    st.write("Centering Grade:", centering_psa_grade(h, v))
-
-    st.markdown("### Subgrades (Out of 10)")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
-
-    st.markdown("### Confidence Breakdown")
-    st.write("Agreement Score:", confidence["agreement_score"])
-    st.write("Threshold Score:", confidence["threshold_score"])
-    st.write("Data Quality Score:", confidence["data_score"])
-    st.write("Boundary Score:", confidence["boundary_score"])
-    st.write("Band Spread:", confidence["band_spread"])
-    if confidence.get("glare_fraction_used") is not None:
-        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
-    if confidence.get("valid_surface_fraction_used") is not None:
-        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
-
-    st.markdown("### Fitted Formula Output")
-    st.write("Predicted Grade:", caps["candidate_grade"])
-    st.write("Centering Band:", caps["centering_cap"])
-    st.write("Corner Band:", caps["corner_cap"])
-    st.write("Edge Band:", caps["edge_cap"])
-    st.write("Surface Band:", caps["surface_cap"])
-
-
-def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: float, surface: float, confidence: dict, submit: dict) -> None:
-    if submit["submit_label"] == "Strong Submit":
-        st.success("STRONG SUBMIT")
-    elif submit["submit_label"] == "Submit":
-        st.success("SUBMIT")
-    elif submit["submit_label"] == "Risky":
-        st.warning("RISKY")
-    else:
-        st.error("DO NOT SUBMIT")
-
-    st.markdown("## Result")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Grade", grade)
-
-    with col2:
-        st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
-
-    with col3:
-        st.metric("Submit", submit["submit_label"])
-
-    st.markdown("### Centering")
-    st.write("Horizontal:", ratio_to_psa_centering(h))
-    st.write("Vertical:", ratio_to_psa_centering(v))
-
-    st.markdown("### Subgrades")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
-
-
-def reset_analysis_state():
-    st.session_state.analysis_complete = False
-    st.session_state.analysis_payload = None
-    st.session_state.analysis_front_bytes = None
-    st.session_state.analysis_back_bytes = None
-    st.session_state.last_save_success = False
-
-
-def validation_status(label: str, passed: bool):
-    text = "OK" if passed else "Missing"
-    css = "status-good" if passed else "status-bad"
-    st.markdown(f"{label}: <span class='{css}'>{text}</span>", unsafe_allow_html=True)
-
-
-def build_analysis_notes(corner_count_used: int, used_surface_fallback: bool, use_manual_centering: bool) -> str:
-    notes = []
-    if use_manual_centering:
-        notes.append("manual_centering_used")
-    if used_surface_fallback:
-        notes.append("surface_fallback_used")
-    notes.append(f"corner_count={corner_count_used}")
-    return ", ".join(notes)
-
-# ============================================================
 # ACCESS + GUIDE
 # ============================================================
 
@@ -766,7 +788,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    <div>• Use solid black contrasting background</div>
+</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -832,7 +854,7 @@ if psa_is_graded:
 # IMAGE INPUTS
 # ============================================================
 
-st.markdown("## Upload Card Images")
+st.markdown("## Upload or Capture Card Images")
 
 clear_col, _ = st.columns([1, 3])
 with clear_col:
@@ -841,63 +863,29 @@ with clear_col:
         reset_analysis_state()
         st.rerun()
 
-st.markdown('<div class="upload-title">Front Image</div>', unsafe_allow_html=True)
-full_card_front = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"front_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
+st.markdown("""
+<div class="info-box">
+You can either upload images or take them directly in the app. Camera capture works best on mobile devices and requires browser camera permission.
+</div>
+""", unsafe_allow_html=True)
 
-st.markdown('<div class="upload-title">Back Image</div>', unsafe_allow_html=True)
-full_card_back = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"back_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
+front_image_obj, front_mode = get_image_input("Front Image", "front")
+back_image_obj, back_mode = get_image_input("Back Image", "back")
 
 st.markdown("### Corner Images (2 Required)")
-st.markdown('<div class="upload-title">Corner 1</div>', unsafe_allow_html=True)
-corner1 = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"c1_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
-
-st.markdown('<div class="upload-title">Corner 2</div>', unsafe_allow_html=True)
-corner2 = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"c2_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
-
-st.markdown('<div class="upload-title">Corner 3 (Optional)</div>', unsafe_allow_html=True)
-corner3 = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"c3_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
-
-st.markdown('<div class="upload-title">Corner 4 (Optional)</div>', unsafe_allow_html=True)
-corner4 = st.file_uploader(
-    "",
-    ["jpg", "jpeg", "png"],
-    key=f"c4_{st.session_state.upload_key}",
-    label_visibility="collapsed"
-)
+corner1_obj, corner1_mode = get_image_input("Corner 1", "corner1")
+corner2_obj, corner2_mode = get_image_input("Corner 2", "corner2")
+corner3_obj, corner3_mode = get_image_input("Corner 3 (Optional)", "corner3")
+corner4_obj, corner4_mode = get_image_input("Corner 4 (Optional)", "corner4")
 
 # ============================================================
 # VALIDATION PANEL
 # ============================================================
 
 st.markdown("## Ready Check")
-front_ok = full_card_front is not None
-back_ok = full_card_back is not None
-corner_count_current = sum(1 for c in [corner1, corner2, corner3, corner4] if c is not None)
+front_ok = front_image_obj is not None
+back_ok = back_image_obj is not None
+corner_count_current = sum(1 for c in [corner1_obj, corner2_obj, corner3_obj, corner4_obj] if c is not None)
 corners_ok = corner_count_current >= 2
 
 v1, v2, v3 = st.columns(3)
@@ -920,12 +908,12 @@ manual_h_ratio = manual_v_ratio = None
 manual_centering_valid = True
 
 if use_manual_centering:
-    if full_card_front is None:
-        st.info("Upload a front image to use centering assist.")
+    if front_image_obj is None:
+        st.info("Provide a front image to use centering assist.")
         manual_centering_valid = False
     else:
         try:
-            front_image = Image.open(full_card_front).convert("RGB")
+            front_image = Image.open(front_image_obj).convert("RGB")
             front_image = front_image.transpose(Image.Transpose.ROTATE_270)
         except Exception as e:
             st.error(f"Could not open front image: {e}")
@@ -999,8 +987,8 @@ if st.button("Run Analysis"):
         st.error("Manual centering values are not valid")
         st.stop()
 
-    front_bytes = full_card_front.getvalue()
-    back_bytes = full_card_back.getvalue()
+    front_bytes = front_image_obj.getvalue()
+    back_bytes = back_image_obj.getvalue()
     front_image_hash = sha256_bytes(front_bytes)
 
     try:
@@ -1036,11 +1024,11 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
-    corner_files = [corner1, corner2]
-    if corner3 is not None:
-        corner_files.append(corner3)
-    if corner4 is not None:
-        corner_files.append(corner4)
+    corner_files = [corner1_obj, corner2_obj]
+    if corner3_obj is not None:
+        corner_files.append(corner3_obj)
+    if corner4_obj is not None:
+        corner_files.append(corner4_obj)
 
     corner_scores = []
     for c in corner_files:
@@ -1176,6 +1164,12 @@ if st.button("Run Analysis"):
         "analysis_success": True,
         "analysis_notes": build_analysis_notes(len(corner_scores), used_surface_fallback, use_manual_centering),
         "front_image_hash": front_image_hash,
+        "front_source_mode": front_mode,
+        "back_source_mode": back_mode,
+        "corner1_source_mode": corner1_mode,
+        "corner2_source_mode": corner2_mode,
+        "corner3_source_mode": corner3_mode if corner3_obj is not None else None,
+        "corner4_source_mode": corner4_mode if corner4_obj is not None else None,
     }
 
     st.session_state.analysis_payload = frozen_payload
@@ -1207,7 +1201,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
 
     st.markdown("""
     <div class="info-box">
-        Automatic card preview overlay has been disabled. Auto centering still runs in the backend, and manual centering remains available above.
+        Automatic card preview overlay remains disabled. Auto centering still runs in the backend, and manual centering remains available above.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1266,6 +1260,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Corner Count Used:", result["corner_count_used"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Analysis Notes:", result["analysis_notes"])
+        st.write("Front Source:", result["front_source_mode"])
+        st.write("Back Source:", result["back_source_mode"])
         if result["scratch_score"] is not None:
             st.write("Scratch Score:", round(float(result["scratch_score"]), 4))
         if result["speckle_score"] is not None:
@@ -1367,6 +1363,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload submit_label:", payload["submit_label"])
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
+                st.write("DEBUG front source mode:", result["front_source_mode"])
+                st.write("DEBUG back source mode:", result["back_source_mode"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
