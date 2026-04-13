@@ -137,6 +137,14 @@ tbody tr td {
     padding: 6px;
     background: rgba(255,255,255,0.03);
 }
+.range-box {
+    border: 1px solid rgba(201,164,77,0.35);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(201,164,77,0.08);
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,7 +154,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.5"
+MODEL_VERSION = "v10.6.1-admin-fix-grade-range"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -318,7 +326,6 @@ def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
 def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-
     preferred_cols = [
         "created_at",
         "card_id",
@@ -351,7 +358,6 @@ def pil_to_base64(img: Image.Image) -> str:
 def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
-
     html = f"""
     <div style="
         position: relative;
@@ -445,13 +451,11 @@ def render_image_slot(label: str, slot_name: str, required: bool):
     if not required:
         options = ["None", "Upload", "Take Photo"]
 
-    default = options[0]
-    mode_key = f"{slot_name}_mode_{st.session_state.upload_key}_{slot_version}"
     mode = st.radio(
         f"{label} Source",
         options,
         horizontal=True,
-        key=mode_key,
+        key=f"{slot_name}_mode_{st.session_state.upload_key}_{slot_version}",
         label_visibility="collapsed",
     )
 
@@ -491,6 +495,116 @@ def render_image_slot(label: str, slot_name: str, required: bool):
 
     st.markdown("</div>", unsafe_allow_html=True)
     return obj, mode
+
+
+# ============================================================
+# HISTORICAL GRADE RANGE HELPERS
+# ============================================================
+
+GRADE_BANDS = [
+    ("10 Candidate", 9.7, 10.01),
+    ("9.5-9.6", 9.5, 9.7),
+    ("9.0-9.4", 9.0, 9.5),
+    ("8.5-8.9", 8.5, 9.0),
+    ("8.0-8.4", 8.0, 8.5),
+    ("Below 8.0", -999.0, 8.0),
+]
+
+
+def predicted_grade_band(value: float) -> str:
+    try:
+        g = float(value)
+    except Exception:
+        return "Unknown"
+    for label, low, high in GRADE_BANDS:
+        if low <= g < high:
+            return label
+    return "Unknown"
+
+
+def add_grade_band_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    if "calibrated_grade" in out.columns:
+        out["predicted_grade_band"] = out["calibrated_grade"].apply(predicted_grade_band)
+    return out
+
+
+def build_grade_range_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    needed = ["calibrated_grade", "psa_actual_grade"]
+    if not all(c in df.columns for c in needed):
+        return pd.DataFrame()
+
+    work = df.dropna(subset=needed).copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work = add_grade_band_columns(work)
+    work["error"] = work["calibrated_grade"] - work["psa_actual_grade"]
+    work["abs_error"] = work["error"].abs()
+
+    rows = []
+    for band, g in work.groupby("predicted_grade_band", dropna=False):
+        sample = len(g)
+        mae = float(g["abs_error"].mean())
+        bias = float(g["error"].mean())
+        p10 = float(g["psa_actual_grade"].quantile(0.10))
+        p90 = float(g["psa_actual_grade"].quantile(0.90))
+        rows.append({
+            "predicted_grade_band": band,
+            "sample_size": sample,
+            "mae": round(mae, 3),
+            "bias": round(bias, 3),
+            "range_low": round(p10, 2),
+            "range_high": round(p90, 2),
+        })
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    band_order = {label: idx for idx, (label, _, _) in enumerate(GRADE_BANDS)}
+    out["sort_order"] = out["predicted_grade_band"].map(lambda x: band_order.get(x, 999))
+    out = out.sort_values(["sort_order", "predicted_grade_band"]).drop(columns=["sort_order"])
+    return out.reset_index(drop=True)
+
+
+def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dict:
+    if range_table is None or range_table.empty:
+        return {
+            "band": predicted_grade_band(predicted_grade),
+            "range_low": round(max(1.0, predicted_grade - 0.5), 2),
+            "range_high": round(min(10.0, predicted_grade + 0.5), 2),
+            "mae": None,
+            "sample_size": 0,
+            "source": "fallback",
+        }
+
+    band = predicted_grade_band(predicted_grade)
+    match = range_table[range_table["predicted_grade_band"] == band]
+    if match.empty:
+        return {
+            "band": band,
+            "range_low": round(max(1.0, predicted_grade - 0.5), 2),
+            "range_high": round(min(10.0, predicted_grade + 0.5), 2),
+            "mae": None,
+            "sample_size": 0,
+            "source": "fallback",
+        }
+
+    row = match.iloc[0]
+    return {
+        "band": band,
+        "range_low": float(row["range_low"]),
+        "range_high": float(row["range_high"]),
+        "mae": float(row["mae"]),
+        "sample_size": int(row["sample_size"]),
+        "source": "historical",
+    }
 
 # ============================================================
 # GRADE MODEL
@@ -557,6 +671,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
     return compute_fitted_grade(h, v, corner, edge, surface)
 
+
 # ============================================================
 # CONFIDENCE
 # ============================================================
@@ -617,7 +732,6 @@ def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_sc
     else:
         penalty += 0.06 * glare_norm
         penalty += 0.04 * gloss
-
     return penalty
 
 
@@ -723,7 +837,6 @@ def compute_confidence(
 
 def compute_submit_probability(grade: float, confidence_score: float, surface: float, band_spread: float) -> dict:
     confidence_percent = confidence_score * 100.0
-
     if grade >= 9.4 and confidence_percent >= 85.0:
         label = "Strong Submit"
         probability = 0.95
@@ -744,6 +857,128 @@ def compute_submit_probability(grade: float, confidence_score: float, surface: f
     }
 
 # ============================================================
+# RESULT PANELS
+# ============================================================
+
+def decision_panel_admin(
+    grade: float,
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float,
+    confidence: dict,
+    submit: dict,
+    grade_range: dict,
+) -> None:
+    caps = compute_psa_caps(h, v, edge, corner, surface)
+
+    if submit["submit_label"] == "Strong Submit":
+        st.success("STRONG SUBMIT")
+    elif submit["submit_label"] == "Submit":
+        st.success("SUBMIT")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
+    else:
+        st.error("DO NOT SUBMIT")
+
+    st.markdown("### Submission Decision")
+    st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
+    st.write("Recommendation:", submit["submit_label"])
+
+    st.markdown("### Confidence")
+    st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
+    st.write("Confidence Level:", confidence["confidence_label"])
+    st.write(
+        "Risk Level:",
+        "Low" if confidence["confidence_score"] >= 0.78 else
+        "Moderate" if confidence["confidence_score"] >= 0.58 else
+        "High"
+    )
+    st.write("Limiting Feature:", caps["limiter"])
+
+    st.markdown("### Expected PSA Range")
+    st.write("Predicted Band:", grade_range["band"])
+    st.write("Expected PSA Range:", f"{grade_range['range_low']:.2f} to {grade_range['range_high']:.2f}")
+    if grade_range["mae"] is not None:
+        st.write("Current Margin of Error (MAE):", round(float(grade_range["mae"]), 3))
+        st.write("Historical Sample Size:", grade_range["sample_size"])
+
+    st.markdown("### Centering")
+    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+    st.write("Vertical Centering:", ratio_to_psa_centering(v))
+    st.write("Centering Grade:", centering_psa_grade(h, v))
+
+    st.markdown("### Subgrades (Out of 10)")
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
+
+    st.markdown("### Confidence Breakdown")
+    st.write("Agreement Score:", confidence["agreement_score"])
+    st.write("Threshold Score:", confidence["threshold_score"])
+    st.write("Data Quality Score:", confidence["data_score"])
+    st.write("Boundary Score:", confidence["boundary_score"])
+    st.write("Band Spread:", confidence["band_spread"])
+    if confidence.get("glare_fraction_used") is not None:
+        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
+    if confidence.get("valid_surface_fraction_used") is not None:
+        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
+
+    st.markdown("### Fitted Formula Output")
+    st.write("Predicted Grade:", caps["candidate_grade"])
+    st.write("Centering Band:", caps["centering_cap"])
+    st.write("Corner Band:", caps["corner_cap"])
+    st.write("Edge Band:", caps["edge_cap"])
+    st.write("Surface Band:", caps["surface_cap"])
+
+
+def decision_panel_user(
+    grade: float,
+    h: float,
+    v: float,
+    corner: float,
+    edge: float,
+    surface: float,
+    confidence: dict,
+    submit: dict,
+    grade_range: dict,
+) -> None:
+    if submit["submit_label"] == "Strong Submit":
+        st.success("STRONG SUBMIT")
+    elif submit["submit_label"] == "Submit":
+        st.success("SUBMIT")
+    elif submit["submit_label"] == "Risky":
+        st.warning("RISKY")
+    else:
+        st.error("DO NOT SUBMIT")
+
+    st.markdown("## Result")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Grade", grade)
+    with col2:
+        st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
+    with col3:
+        st.metric("Submit", submit["submit_label"])
+
+    st.markdown(f"""
+    <div class="range-box">
+        <div><strong>Expected PSA Range:</strong> {grade_range['range_low']:.2f} to {grade_range['range_high']:.2f}</div>
+        <div><strong>Current Margin of Error:</strong> {"N/A" if grade_range['mae'] is None else round(float(grade_range['mae']), 3)}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### Centering")
+    st.write("Horizontal:", ratio_to_psa_centering(h))
+    st.write("Vertical:", ratio_to_psa_centering(v))
+
+    st.markdown("### Subgrades")
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
+
+# ============================================================
 # ACCESS + GUIDE
 # ============================================================
 
@@ -756,7 +991,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    <div>• Use dark contrasting background</div>
+</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -765,7 +1000,6 @@ if user_email:
         headers=headers,
         timeout=30,
     )
-
     if user_check.status_code != 200:
         st.error("User lookup failed")
         st.stop()
@@ -780,6 +1014,22 @@ else:
     st.stop()
 
 # ============================================================
+# LOAD DATA FOR RANGE + ADMIN
+# ============================================================
+
+all_submissions_df = pd.DataFrame()
+range_table = pd.DataFrame()
+
+try:
+    range_resp = requests.get(TABLE_URL, headers=headers, timeout=30)
+    if range_resp.status_code == 200:
+        all_submissions_df = pd.DataFrame(range_resp.json())
+        range_table = build_grade_range_table(all_submissions_df)
+except Exception:
+    all_submissions_df = pd.DataFrame()
+    range_table = pd.DataFrame()
+
+# ============================================================
 # USER SUBMISSION DATA PREVIEW + DOWNLOAD
 # ============================================================
 
@@ -787,7 +1037,6 @@ st.markdown("## My Submission Data")
 
 if st.button("Load My Submission Data"):
     user_df = get_user_submissions(user_email)
-
     if user_df.empty:
         st.warning("No submissions found for this email.")
     else:
@@ -899,7 +1148,6 @@ if use_manual_centering:
         )
 
         col_a, col_b = st.columns([1, 1.1])
-
         with col_a:
             left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
             right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
@@ -1096,6 +1344,8 @@ if st.button("Run Analysis"):
         band_spread=confidence["band_spread"],
     )
 
+    grade_range = lookup_grade_range(grade, range_table)
+
     frozen_payload = {
         "player_name": player_name,
         "manufacturer": manufacturer,
@@ -1123,6 +1373,7 @@ if st.button("Run Analysis"):
         "used_surface_fallback": used_surface_fallback,
         "base_fitted_grade": grade,
         "grade": grade,
+        "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
         "corner_count_used": len(corner_scores),
@@ -1183,6 +1434,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["surface_score"],
             result["confidence"],
             result["submit"],
+            result["grade_range"],
         )
     else:
         decision_panel_user(
@@ -1194,6 +1446,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["surface_score"],
             result["confidence"],
             result["submit"],
+            result["grade_range"],
         )
 
     if result["used_surface_fallback"] and user_role == "admin":
@@ -1317,6 +1570,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "analysis_success": True,
             "analysis_notes": json_safe(result["analysis_notes"]),
             "front_image_hash": json_safe(result["front_image_hash"]),
+            "grade_range_low": json_safe(result["grade_range"]["range_low"]),
+            "grade_range_high": json_safe(result["grade_range"]["range_high"]),
+            "grade_band_sample_size": json_safe(result["grade_range"]["sample_size"]),
+            "grade_band_mae": json_safe(result["grade_range"]["mae"]),
         }
 
         if user_role == "admin":
@@ -1330,6 +1587,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
                 st.write("DEBUG front source mode:", result["front_source_mode"])
                 st.write("DEBUG back source mode:", result["back_source_mode"])
+                st.write("DEBUG grade range:", result["grade_range"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -1349,66 +1607,102 @@ if user_role == "admin":
     st.markdown("---")
     st.markdown("## Admin Dashboard")
 
-    try:
-        admin_resp = requests.get(TABLE_URL, headers=headers, timeout=30)
-        admin_resp.raise_for_status()
-        df = pd.DataFrame(admin_resp.json())
-    except Exception as e:
-        st.error(f"Failed to load admin data: {e}")
+    df = all_submissions_df.copy()
+    if df.empty:
+        st.warning("No admin data available.")
         st.stop()
 
     st.write("Total:", len(df))
-
-    st.markdown("### Version Analytics")
-    if not df.empty:
-        a1, a2 = st.columns(2)
-        with a1:
-            if "model_version" in df.columns:
-                st.write("Rows by Version")
-                st.dataframe(
-                    df["model_version"].value_counts(dropna=False).rename_axis("model_version").reset_index(name="count"),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            if "submit_label" in df.columns and "model_version" in df.columns:
-                submit_breakdown = df.pivot_table(index="model_version", columns="submit_label", aggfunc="size", fill_value=0)
-                st.write("Submit Labels by Version")
-                st.dataframe(submit_breakdown.reset_index(), use_container_width=True, hide_index=True)
-
-        with a2:
-            if "confidence_label" in df.columns and "model_version" in df.columns:
-                conf_breakdown = df.pivot_table(index="model_version", columns="confidence_label", aggfunc="size", fill_value=0)
-                st.write("Confidence Labels by Version")
-                st.dataframe(conf_breakdown.reset_index(), use_container_width=True, hide_index=True)
-
-            if "calibrated_grade" in df.columns and "model_version" in df.columns:
-                avg_grade = df.groupby("model_version", dropna=False)["calibrated_grade"].mean().reset_index()
-                avg_grade.columns = ["model_version", "avg_calibrated_grade"]
-                st.write("Average Grade by Version")
-                st.dataframe(avg_grade, use_container_width=True, hide_index=True)
+    df = add_grade_band_columns(df)
 
     if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
         dfv = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
         if len(dfv):
-            dfv.loc[:, "error"] = dfv["calibrated_grade"] - dfv["psa_actual_grade"]
+            dfv["error"] = dfv["calibrated_grade"] - dfv["psa_actual_grade"]
+            dfv["abs_error"] = dfv["error"].abs()
             st.write("MAE:", round(abs(dfv["error"]).mean(), 3))
             st.write("Bias:", round(dfv["error"].mean(), 3))
             st.bar_chart(dfv["error"])
 
-            if "model_version" in dfv.columns:
-                per_ver = dfv.groupby("model_version").agg(
-                    matched_rows=("error", "size"),
-                    mae=("error", lambda s: round(abs(s).mean(), 3)),
-                    bias=("error", lambda s: round(s.mean(), 3)),
-                ).reset_index()
-                st.write("PSA Match Stats by Version")
-                st.dataframe(per_ver, use_container_width=True, hide_index=True)
+    st.markdown("### Grade Range / Margin of Error Table")
+    if not range_table.empty:
+        st.dataframe(range_table, use_container_width=True, hide_index=True)
+    else:
+        st.info("Not enough PSA-linked data yet to build historical grade ranges.")
+
+    st.markdown("### Diagnostics by Grade Band")
+    if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
+        band_diag = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
+        if not band_diag.empty:
+            band_diag["error"] = band_diag["calibrated_grade"] - band_diag["psa_actual_grade"]
+            band_diag["abs_error"] = band_diag["error"].abs()
+            band_summary = band_diag.groupby("predicted_grade_band").agg(
+                sample_size=("error", "size"),
+                mae=("abs_error", lambda s: round(float(s.mean()), 3)),
+                bias=("error", lambda s: round(float(s.mean()), 3)),
+                avg_pred=("calibrated_grade", lambda s: round(float(s.mean()), 2)),
+                avg_psa=("psa_actual_grade", lambda s: round(float(s.mean()), 2)),
+            ).reset_index()
+            st.dataframe(band_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### Diagnostics by Stock Type")
+    if {"stock_type", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
+        stock_diag = df.dropna(subset=["stock_type", "psa_actual_grade", "calibrated_grade"]).copy()
+        if not stock_diag.empty:
+            stock_diag["error"] = stock_diag["calibrated_grade"] - stock_diag["psa_actual_grade"]
+            stock_diag["abs_error"] = stock_diag["error"].abs()
+            stock_summary = stock_diag.groupby("stock_type").agg(
+                sample_size=("error", "size"),
+                mae=("abs_error", lambda s: round(float(s.mean()), 3)),
+                bias=("error", lambda s: round(float(s.mean()), 3)),
+            ).reset_index()
+            st.dataframe(stock_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### Diagnostics by Confidence Label")
+    if {"confidence_label", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
+        conf_diag = df.dropna(subset=["confidence_label", "psa_actual_grade", "calibrated_grade"]).copy()
+        if not conf_diag.empty:
+            conf_diag["error"] = conf_diag["calibrated_grade"] - conf_diag["psa_actual_grade"]
+            conf_diag["abs_error"] = conf_diag["error"].abs()
+            conf_summary = conf_diag.groupby("confidence_label").agg(
+                sample_size=("error", "size"),
+                mae=("abs_error", lambda s: round(float(s.mean()), 3)),
+                bias=("error", lambda s: round(float(s.mean()), 3)),
+            ).reset_index()
+            st.dataframe(conf_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### Version Analytics")
+    a1, a2 = st.columns(2)
+    with a1:
+        if "model_version" in df.columns:
+            st.write("Rows by Version")
+            st.dataframe(
+                df["model_version"].value_counts(dropna=False).rename_axis("model_version").reset_index(name="count"),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        if "submit_label" in df.columns and "model_version" in df.columns:
+            submit_breakdown = df.pivot_table(index="model_version", columns="submit_label", aggfunc="size", fill_value=0)
+            st.write("Submit Labels by Version")
+            st.dataframe(submit_breakdown.reset_index(), use_container_width=True, hide_index=True)
+
+    with a2:
+        if "confidence_label" in df.columns and "model_version" in df.columns:
+            conf_breakdown = df.pivot_table(index="model_version", columns="confidence_label", aggfunc="size", fill_value=0)
+            st.write("Confidence Labels by Version")
+            st.dataframe(conf_breakdown.reset_index(), use_container_width=True, hide_index=True)
+
+        if "calibrated_grade" in df.columns and "model_version" in df.columns:
+            avg_grade = df.groupby("model_version", dropna=False)["calibrated_grade"].mean().reset_index()
+            avg_grade.columns = ["model_version", "avg_calibrated_grade"]
+            st.write("Average Grade by Version")
+            st.dataframe(avg_grade, use_container_width=True, hide_index=True)
 
     st.markdown("### Filters")
     filtered_df = df.copy()
 
-    f1, f2, f3, f4, f5 = st.columns(5)
+    f1, f2, f3, f4, f5, f6 = st.columns(6)
     with f1:
         version_options = ["All"] + sorted([str(v) for v in filtered_df["model_version"].dropna().unique()]) if "model_version" in filtered_df.columns else ["All"]
         version_filter = st.selectbox("Model Version", version_options)
@@ -1419,9 +1713,21 @@ if user_role == "admin":
         submitter_options = ["All"] + sorted([str(v) for v in filtered_df["submitted_by"].dropna().unique()]) if "submitted_by" in filtered_df.columns else ["All"]
         submitter_filter = st.selectbox("Submitted By", submitter_options)
     with f4:
-        only_psa = st.checkbox("Only PSA rows")
+        stock_options = ["All"] + sorted([str(v) for v in filtered_df["stock_type"].dropna().unique()]) if "stock_type" in filtered_df.columns else ["All"]
+        stock_filter = st.selectbox("Stock Type", stock_options)
     with f5:
+        band_options = ["All"] + sorted([str(v) for v in filtered_df["predicted_grade_band"].dropna().unique()]) if "predicted_grade_band" in filtered_df.columns else ["All"]
+        band_filter = st.selectbox("Predicted Grade Band", band_options)
+    with f6:
+        sort_option = st.selectbox("Sort By", ["Newest", "Biggest PSA Miss", "Highest Grade", "Lowest Grade"])
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        only_psa = st.checkbox("Only PSA rows")
+    with c2:
         only_manual = st.checkbox("Only Manual Centering")
+    with c3:
+        only_high_conf = st.checkbox("Only High Confidence")
 
     if version_filter != "All" and "model_version" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["model_version"] == version_filter]
@@ -1429,10 +1735,30 @@ if user_role == "admin":
         filtered_df = filtered_df[filtered_df["submit_label"] == submit_filter]
     if submitter_filter != "All" and "submitted_by" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["submitted_by"] == submitter_filter]
+    if stock_filter != "All" and "stock_type" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["stock_type"] == stock_filter]
+    if band_filter != "All" and "predicted_grade_band" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["predicted_grade_band"] == band_filter]
     if only_psa and "psa_actual_grade" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["psa_actual_grade"].notna()]
     if only_manual and "manual_centering_used" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["manual_centering_used"] == True]
+    if only_high_conf and "confidence_label" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["confidence_label"] == "High"]
+
+    if {"psa_actual_grade", "calibrated_grade"}.issubset(filtered_df.columns):
+        filtered_df = filtered_df.copy()
+        filtered_df["error"] = filtered_df["calibrated_grade"] - filtered_df["psa_actual_grade"]
+        filtered_df["abs_error"] = filtered_df["error"].abs()
+
+    if sort_option == "Biggest PSA Miss" and "abs_error" in filtered_df.columns:
+        filtered_df = filtered_df.sort_values("abs_error", ascending=False)
+    elif sort_option == "Highest Grade" and "calibrated_grade" in filtered_df.columns:
+        filtered_df = filtered_df.sort_values("calibrated_grade", ascending=False)
+    elif sort_option == "Lowest Grade" and "calibrated_grade" in filtered_df.columns:
+        filtered_df = filtered_df.sort_values("calibrated_grade", ascending=True)
+    elif "created_at" in filtered_df.columns:
+        filtered_df = filtered_df.sort_values("created_at", ascending=False)
 
     st.write("Filtered Total:", len(filtered_df))
 
@@ -1442,18 +1768,47 @@ if user_role == "admin":
         "model_version",
         "player_name",
         "manufacturer",
+        "stock_type",
+        "predicted_grade_band",
         "calibrated_grade",
+        "psa_actual_grade",
+        "error",
+        "abs_error",
         "confidence_percent",
         "submit_label",
+        "manual_centering_used",
         "corner_count_used",
         "used_surface_fallback",
         "front_image_url",
         "card_id",
     ]
     show_cols = [c for c in show_cols if c in filtered_df.columns]
-
     if len(show_cols):
         st.dataframe(filtered_df[show_cols], use_container_width=True, hide_index=True)
+
+    st.markdown("### Biggest PSA Misses")
+    if "abs_error" in filtered_df.columns:
+        worst = filtered_df.sort_values("abs_error", ascending=False).head(15)
+        worst_cols = [c for c in [
+            "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
+            "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
+            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
+        ] if c in worst.columns]
+        st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
+
+    st.markdown("### Manual Centering Comparison")
+    if {"manual_centering_used", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
+        mc = df.dropna(subset=["manual_centering_used", "psa_actual_grade", "calibrated_grade"]).copy()
+        if not mc.empty:
+            mc["error"] = mc["calibrated_grade"] - mc["psa_actual_grade"]
+            mc["abs_error"] = mc["error"].abs()
+            mc_summary = mc.groupby("manual_centering_used").agg(
+                sample_size=("error", "size"),
+                mae=("abs_error", lambda s: round(float(s.mean()), 3)),
+                bias=("error", lambda s: round(float(s.mean()), 3)),
+                avg_grade=("calibrated_grade", lambda s: round(float(s.mean()), 2)),
+            ).reset_index()
+            st.dataframe(mc_summary, use_container_width=True, hide_index=True)
 
     if not filtered_df.empty:
         st.download_button(
@@ -1532,6 +1887,7 @@ if user_role == "admin":
                 band_spread=confidence["band_spread"],
             )
 
+            current_grade_range = lookup_grade_range(new_grade, range_table)
             new_card_id = str(uuid.uuid4())
 
             new_data = {
@@ -1583,18 +1939,18 @@ if user_role == "admin":
                     )
                 ),
                 "front_image_hash": json_safe(row.get("front_image_hash")),
+                "grade_range_low": json_safe(current_grade_range["range_low"]),
+                "grade_range_high": json_safe(current_grade_range["range_high"]),
+                "grade_band_sample_size": json_safe(current_grade_range["sample_size"]),
+                "grade_band_mae": json_safe(current_grade_range["mae"]),
             }
 
             try:
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
                 if post_resp.status_code not in [200, 201]:
-                    status_box.warning(
-                        f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}"
-                    )
+                    status_box.warning(f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}")
             except Exception as e:
-                status_box.warning(
-                    f"Post exception for source card_id {row.get('card_id')}: {e}"
-                )
+                status_box.warning(f"Post exception for source card_id {row.get('card_id')}: {e}")
 
             status_box.write(
                 f"Processed {idx}/{total_rows} | "
