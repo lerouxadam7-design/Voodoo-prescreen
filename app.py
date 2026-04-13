@@ -72,18 +72,19 @@ tbody tr td {
     color: white !important;
 }
 [data-testid="stFileUploader"] {
-    padding: 0.2rem 0.2rem !important;
+    padding: 0.1rem 0.1rem !important;
 }
 [data-testid="stFileUploader"] section {
-    padding: 0.4rem 0.5rem !important;
-    min-height: 40px !important;
+    padding: 0.25rem 0.4rem !important;
+    min-height: 34px !important;
 }
 [data-testid="stFileUploader"] div {
-    font-size: 0.78rem !important;
+    font-size: 0.76rem !important;
 }
 .upload-title {
-    font-size: 0.9rem;
-    margin-bottom: 0.15rem;
+    font-size: 0.92rem;
+    margin-bottom: 0.25rem;
+    font-weight: 700;
 }
 .guide-box {
     border: 1px solid rgba(255,255,255,0.22);
@@ -113,6 +114,29 @@ tbody tr td {
     margin-top: 10px;
     margin-bottom: 10px;
 }
+.capture-card {
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    margin-bottom: 12px;
+}
+.capture-title {
+    font-weight: 700;
+    color: #C9A44D;
+    margin-bottom: 6px;
+}
+.capture-note {
+    font-size: 0.8rem;
+    color: #dddddd;
+    margin-bottom: 6px;
+}
+.preview-thumb {
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 8px;
+    padding: 6px;
+    background: rgba(255,255,255,0.03);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,7 +146,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.4-locked-camera-enabled"
+MODEL_VERSION = "v10.5"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -156,6 +180,8 @@ if "analysis_front_bytes" not in st.session_state:
     st.session_state.analysis_front_bytes = None
 if "analysis_back_bytes" not in st.session_state:
     st.session_state.analysis_back_bytes = None
+if "slot_versions" not in st.session_state:
+    st.session_state.slot_versions = {}
 
 # ============================================================
 # HELPERS
@@ -281,11 +307,9 @@ def get_user_submissions(submitted_by_email: str) -> pd.DataFrame:
         )
         if resp.status_code != 200:
             return pd.DataFrame()
-
         data = resp.json()
         if not isinstance(data, list):
             return pd.DataFrame()
-
         return pd.DataFrame(data)
     except Exception:
         return pd.DataFrame()
@@ -314,7 +338,6 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
         "front_image_url",
         "back_image_url",
     ]
-
     export_cols = [c for c in preferred_cols if c in df.columns]
     return df[export_cols].copy()
 
@@ -354,7 +377,6 @@ def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y:
 def backfill_surface_from_url(front_image_url: str):
     if not front_image_url:
         return None, None, None, None
-
     try:
         img_resp = requests.get(front_image_url, timeout=60)
         if img_resp.status_code != 200:
@@ -365,7 +387,6 @@ def backfill_surface_from_url(front_image_url: str):
             files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
             timeout=60,
         )
-
         if sr.status_code != 200:
             return None, None, None, None
 
@@ -407,117 +428,69 @@ def reset_analysis_state():
     st.session_state.last_save_success = False
 
 
-def get_image_input(label: str, key_prefix: str):
+def clear_slot(slot_name: str):
+    current = st.session_state.slot_versions.get(slot_name, 0)
+    st.session_state.slot_versions[slot_name] = current + 1
+    reset_analysis_state()
+    st.rerun()
+
+
+def current_slot_version(slot_name: str) -> int:
+    return st.session_state.slot_versions.get(slot_name, 0)
+
+
+def render_image_slot(label: str, slot_name: str, required: bool):
+    slot_version = current_slot_version(slot_name)
+    options = ["Upload", "Take Photo"]
+    if not required:
+        options = ["None", "Upload", "Take Photo"]
+
+    default = options[0]
+    mode_key = f"{slot_name}_mode_{st.session_state.upload_key}_{slot_version}"
     mode = st.radio(
         f"{label} Source",
-        ["Upload", "Camera"],
+        options,
         horizontal=True,
-        key=f"{key_prefix}_mode_{st.session_state.upload_key}",
+        key=mode_key,
         label_visibility="collapsed",
     )
-    st.markdown(f'<div class="upload-title">{label}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="capture-card">', unsafe_allow_html=True)
+    st.markdown(f'<div class="capture-title">{label}</div>', unsafe_allow_html=True)
+
+    obj = None
     if mode == "Upload":
-        file_obj = st.file_uploader(
+        st.markdown('<div class="capture-note">Choose an existing image from your device.</div>', unsafe_allow_html=True)
+        obj = st.file_uploader(
             "",
             ["jpg", "jpeg", "png"],
-            key=f"{key_prefix}_upload_{st.session_state.upload_key}",
+            key=f"{slot_name}_upload_{st.session_state.upload_key}_{slot_version}",
             label_visibility="collapsed",
         )
-    else:
-        file_obj = st.camera_input(
+    elif mode == "Take Photo":
+        st.markdown('<div class="capture-note">Take a new photo directly in the app.</div>', unsafe_allow_html=True)
+        obj = st.camera_input(
             "",
-            key=f"{key_prefix}_camera_{st.session_state.upload_key}",
+            key=f"{slot_name}_camera_{st.session_state.upload_key}_{slot_version}",
             label_visibility="collapsed",
         )
-    return file_obj, mode
-
-
-def decision_panel_admin(grade: float, h: float, v: float, edge: float, corner: float, surface: float, confidence: dict, submit: dict) -> None:
-    caps = compute_psa_caps(h, v, edge, corner, surface)
-
-    if submit["submit_label"] == "Strong Submit":
-        st.success("STRONG SUBMIT")
-    elif submit["submit_label"] == "Submit":
-        st.success("SUBMIT")
-    elif submit["submit_label"] == "Risky":
-        st.warning("RISKY")
     else:
-        st.error("DO NOT SUBMIT")
+        st.markdown('<div class="capture-note">No image selected for this slot.</div>', unsafe_allow_html=True)
 
-    st.markdown("### Submission Decision")
-    st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
-    st.write("Recommendation:", submit["submit_label"])
+    if obj is not None:
+        preview_col, action_col = st.columns([1, 1])
+        with preview_col:
+            st.markdown('<div class="preview-thumb">', unsafe_allow_html=True)
+            st.image(obj, width=145)
+            st.markdown("</div>", unsafe_allow_html=True)
+        with action_col:
+            st.write("Ready")
+            if st.button(f"Clear {label}", key=f"{slot_name}_clear_btn_{st.session_state.upload_key}_{slot_version}"):
+                st.markdown("</div>", unsafe_allow_html=True)
+                clear_slot(slot_name)
 
-    st.markdown("### Confidence")
-    st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
-    st.write("Confidence Level:", confidence["confidence_label"])
-    st.write(
-        "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.78 else
-        "Moderate" if confidence["confidence_score"] >= 0.58 else
-        "High"
-    )
-    st.write("Limiting Feature:", caps["limiter"])
-
-    st.markdown("### Centering")
-    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
-    st.write("Vertical Centering:", ratio_to_psa_centering(v))
-    st.write("Centering Grade:", centering_psa_grade(h, v))
-
-    st.markdown("### Subgrades (Out of 10)")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
-
-    st.markdown("### Confidence Breakdown")
-    st.write("Agreement Score:", confidence["agreement_score"])
-    st.write("Threshold Score:", confidence["threshold_score"])
-    st.write("Data Quality Score:", confidence["data_score"])
-    st.write("Boundary Score:", confidence["boundary_score"])
-    st.write("Band Spread:", confidence["band_spread"])
-    if confidence.get("glare_fraction_used") is not None:
-        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
-    if confidence.get("valid_surface_fraction_used") is not None:
-        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
-
-    st.markdown("### Fitted Formula Output")
-    st.write("Predicted Grade:", caps["candidate_grade"])
-    st.write("Centering Band:", caps["centering_cap"])
-    st.write("Corner Band:", caps["corner_cap"])
-    st.write("Edge Band:", caps["edge_cap"])
-    st.write("Surface Band:", caps["surface_cap"])
-
-
-def decision_panel_user(grade: float, h: float, v: float, corner: float, edge: float, surface: float, confidence: dict, submit: dict) -> None:
-    if submit["submit_label"] == "Strong Submit":
-        st.success("STRONG SUBMIT")
-    elif submit["submit_label"] == "Submit":
-        st.success("SUBMIT")
-    elif submit["submit_label"] == "Risky":
-        st.warning("RISKY")
-    else:
-        st.error("DO NOT SUBMIT")
-
-    st.markdown("## Result")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Grade", grade)
-
-    with col2:
-        st.metric("Confidence", f"{confidence['confidence_percent']:.1f}%")
-
-    with col3:
-        st.metric("Submit", submit["submit_label"])
-
-    st.markdown("### Centering")
-    st.write("Horizontal:", ratio_to_psa_centering(h))
-    st.write("Vertical:", ratio_to_psa_centering(v))
-
-    st.markdown("### Subgrades")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
+    st.markdown("</div>", unsafe_allow_html=True)
+    return obj, mode
 
 # ============================================================
 # GRADE MODEL
@@ -588,107 +561,6 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
 # CONFIDENCE
 # ============================================================
 
-def compute_confidence(
-    h: float,
-    v: float,
-    edge: float,
-    corner: float,
-    surface: float,
-    grade: float,
-    stock_type: str = "",
-    manual_centering_used: bool = False,
-    used_surface_fallback: bool = False,
-    corner_count: int = 0,
-    glare_fraction: float = None,
-    valid_surface_fraction: float = None,
-    gloss_score: float = None,
-) -> dict:
-    centering_band = centering_psa_grade(h, v)
-    corner_band = corner_grade_band(corner)
-    edge_band = edge_grade_band(edge)
-    surface_band = surface_grade_band(surface)
-
-    bands = [centering_band, corner_band, edge_band, surface_band]
-    spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 6.0))
-
-    d_center = band_distance_centering(h, v)
-    d_corner = band_distance_corner(corner)
-    d_edge = band_distance_edge(edge)
-    d_surface = band_distance_surface(surface)
-
-    center_conf = min(1.0, d_center / 0.085)
-    corner_conf = min(1.0, d_corner / 0.14)
-    edge_conf = min(1.0, d_edge / 0.020)
-    surface_conf = min(1.0, d_surface / 0.055)
-
-    threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
-
-    data_score = 1.0
-
-    if used_surface_fallback:
-        data_score -= 0.12
-
-    if corner_count < 2:
-        data_score -= 0.20
-    elif corner_count == 2:
-        data_score -= 0.03
-    elif corner_count >= 4:
-        data_score += 0.03
-
-    if manual_centering_used:
-        data_score += 0.04
-
-    valid_surface_norm = normalize_valid_surface_fraction(valid_surface_fraction)
-    glare_norm = normalize_glare_fraction(glare_fraction)
-
-    if valid_surface_fraction is not None:
-        data_score += 0.08 * (valid_surface_norm - 0.5)
-
-    if glare_fraction is not None:
-        data_score -= 0.08 * glare_norm
-
-    data_score -= stock_confidence_adjustment(stock_type, glare_fraction, gloss_score)
-    data_score = max(0.0, min(1.0, data_score))
-
-    boundary_dist = grade_boundary_distance(grade)
-    boundary_score = min(1.0, boundary_dist / 0.35)
-
-    confidence_raw = (
-        0.38 * agreement_score +
-        0.27 * threshold_score +
-        0.25 * data_score +
-        0.10 * boundary_score
-    )
-
-    confidence_raw = max(0.0, min(1.0, confidence_raw))
-    confidence_percent = round(confidence_raw * 100.0, 1)
-
-    if confidence_percent >= 78:
-        label = "High"
-    elif confidence_percent >= 58:
-        label = "Moderate"
-    else:
-        label = "Low"
-
-    return {
-        "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": confidence_percent,
-        "confidence_label": label,
-        "agreement_score": round(agreement_score, 3),
-        "threshold_score": round(threshold_score, 3),
-        "data_score": round(data_score, 3),
-        "band_spread": round(spread, 2),
-        "boundary_score": round(boundary_score, 3),
-        "glare_fraction_used": None if glare_fraction is None else round(float(glare_fraction), 3),
-        "valid_surface_fraction_used": None if valid_surface_fraction is None else round(float(valid_surface_fraction), 3),
-        "centering_band": centering_band,
-        "corner_band": corner_band,
-        "edge_band": edge_band,
-        "surface_band": surface_band,
-    }
-
-
 def band_distance_centering(h: float, v: float) -> float:
     worst = min(float(h), float(v))
     thresholds = [0.70, 0.80, 0.90]
@@ -736,7 +608,6 @@ def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_sc
     gloss = 0.0 if gloss_score is None else float(max(0.0, min(1.0, gloss_score)))
 
     penalty = 0.0
-
     if stock in ["chrome", "refractor", "foil"]:
         penalty += 0.10 * glare_norm
         penalty += 0.06 * gloss
@@ -748,6 +619,103 @@ def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_sc
         penalty += 0.04 * gloss
 
     return penalty
+
+
+def compute_confidence(
+    h: float,
+    v: float,
+    edge: float,
+    corner: float,
+    surface: float,
+    grade: float,
+    stock_type: str = "",
+    manual_centering_used: bool = False,
+    used_surface_fallback: bool = False,
+    corner_count: int = 0,
+    glare_fraction: float = None,
+    valid_surface_fraction: float = None,
+    gloss_score: float = None,
+) -> dict:
+    centering_band = centering_psa_grade(h, v)
+    corner_band = corner_grade_band(corner)
+    edge_band = edge_grade_band(edge)
+    surface_band = surface_grade_band(surface)
+
+    bands = [centering_band, corner_band, edge_band, surface_band]
+    spread = max(bands) - min(bands)
+    agreement_score = max(0.0, 1.0 - (spread / 6.0))
+
+    d_center = band_distance_centering(h, v)
+    d_corner = band_distance_corner(corner)
+    d_edge = band_distance_edge(edge)
+    d_surface = band_distance_surface(surface)
+
+    center_conf = min(1.0, d_center / 0.085)
+    corner_conf = min(1.0, d_corner / 0.14)
+    edge_conf = min(1.0, d_edge / 0.020)
+    surface_conf = min(1.0, d_surface / 0.055)
+
+    threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
+
+    data_score = 1.0
+    if used_surface_fallback:
+        data_score -= 0.12
+    if corner_count < 2:
+        data_score -= 0.20
+    elif corner_count == 2:
+        data_score -= 0.03
+    elif corner_count >= 4:
+        data_score += 0.03
+    if manual_centering_used:
+        data_score += 0.04
+
+    valid_surface_norm = normalize_valid_surface_fraction(valid_surface_fraction)
+    glare_norm = normalize_glare_fraction(glare_fraction)
+
+    if valid_surface_fraction is not None:
+        data_score += 0.08 * (valid_surface_norm - 0.5)
+    if glare_fraction is not None:
+        data_score -= 0.08 * glare_norm
+
+    data_score -= stock_confidence_adjustment(stock_type, glare_fraction, gloss_score)
+    data_score = max(0.0, min(1.0, data_score))
+
+    boundary_dist = grade_boundary_distance(grade)
+    boundary_score = min(1.0, boundary_dist / 0.35)
+
+    confidence_raw = (
+        0.38 * agreement_score +
+        0.27 * threshold_score +
+        0.25 * data_score +
+        0.10 * boundary_score
+    )
+
+    confidence_raw = max(0.0, min(1.0, confidence_raw))
+    confidence_percent = round(confidence_raw * 100.0, 1)
+
+    if confidence_percent >= 78:
+        label = "High"
+    elif confidence_percent >= 58:
+        label = "Moderate"
+    else:
+        label = "Low"
+
+    return {
+        "confidence_score": round(confidence_raw, 3),
+        "confidence_percent": confidence_percent,
+        "confidence_label": label,
+        "agreement_score": round(agreement_score, 3),
+        "threshold_score": round(threshold_score, 3),
+        "data_score": round(data_score, 3),
+        "band_spread": round(spread, 2),
+        "boundary_score": round(boundary_score, 3),
+        "glare_fraction_used": None if glare_fraction is None else round(float(glare_fraction), 3),
+        "valid_surface_fraction_used": None if valid_surface_fraction is None else round(float(valid_surface_fraction), 3),
+        "centering_band": centering_band,
+        "corner_band": corner_band,
+        "edge_band": edge_band,
+        "surface_band": surface_band,
+    }
 
 # ============================================================
 # SUBMIT LOGIC
@@ -788,7 +756,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-</div>
+    <div>• Use dark contrasting background</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -824,7 +792,6 @@ if st.button("Load My Submission Data"):
         st.warning("No submissions found for this email.")
     else:
         export_df = build_user_export_df(user_df)
-
         st.success(f"Found {len(export_df)} submission(s).")
         st.dataframe(export_df, use_container_width=True, hide_index=True)
 
@@ -854,29 +821,30 @@ if psa_is_graded:
 # IMAGE INPUTS
 # ============================================================
 
-st.markdown("## Upload or Capture Card Images")
+st.markdown("## Card Images")
 
 clear_col, _ = st.columns([1, 3])
 with clear_col:
-    if st.button("🧹 Clear Images"):
+    if st.button("🧹 Clear All Images"):
         st.session_state.upload_key = str(uuid.uuid4())
+        st.session_state.slot_versions = {}
         reset_analysis_state()
         st.rerun()
 
 st.markdown("""
 <div class="info-box">
-You can either upload images or take them directly in the app. Camera capture works best on mobile devices and requires browser camera permission.
+Each image slot shows only one action at a time. Choose Upload or Take Photo, then review the small preview. Use the slot's clear button to retake or replace just that image.
 </div>
 """, unsafe_allow_html=True)
 
-front_image_obj, front_mode = get_image_input("Front Image", "front")
-back_image_obj, back_mode = get_image_input("Back Image", "back")
+front_image_obj, front_mode = render_image_slot("Front Image", "front", required=True)
+back_image_obj, back_mode = render_image_slot("Back Image", "back", required=True)
 
 st.markdown("### Corner Images (2 Required)")
-corner1_obj, corner1_mode = get_image_input("Corner 1", "corner1")
-corner2_obj, corner2_mode = get_image_input("Corner 2", "corner2")
-corner3_obj, corner3_mode = get_image_input("Corner 3 (Optional)", "corner3")
-corner4_obj, corner4_mode = get_image_input("Corner 4 (Optional)", "corner4")
+corner1_obj, corner1_mode = render_image_slot("Corner 1", "corner1", required=True)
+corner2_obj, corner2_mode = render_image_slot("Corner 2", "corner2", required=True)
+corner3_obj, corner3_mode = render_image_slot("Corner 3", "corner3", required=False)
+corner4_obj, corner4_mode = render_image_slot("Corner 4", "corner4", required=False)
 
 # ============================================================
 # VALIDATION PANEL
@@ -974,15 +942,12 @@ if st.button("Run Analysis"):
     if not front_ok:
         st.error("Front image required")
         st.stop()
-
     if not back_ok:
         st.error("Back image required")
         st.stop()
-
     if not corners_ok:
         st.error("At least 2 corner images are required")
         st.stop()
-
     if use_manual_centering and not manual_centering_valid:
         st.error("Manual centering values are not valid")
         st.stop()
@@ -1371,7 +1336,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         if save_response.status_code in [200, 201]:
             st.session_state.last_save_success = True
             st.success("Saved successfully")
-            st.info("Images remain loaded. Use the 'Clear Images' button when you're ready.")
+            st.info("Images remain loaded. Use the clear buttons above whenever you want to replace them.")
         else:
             st.session_state.last_save_success = False
             st.error(f"Database save failed: {save_response.text}")
