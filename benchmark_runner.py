@@ -6,8 +6,8 @@ import numpy as np
 # CONFIG
 # ============================
 
-SUPABASE_URL = "YOUR_SUPABASE_URL"
-SUPABASE_KEY = "YOUR_SUPABASE_KEY"
+SUPABASE_URL = "https://nnowtzpkldfrkixeonau.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ub3d0enBrbGRmcmtpeGVvbmF1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTk3NDIzMiwiZXhwIjoyMDg3NTUwMjMyfQ.7XY3evntb9FOUHqEMeT8uuaKgAsB98jfay4FlPhvknA"
 API_BASE = "https://voodoo-centering-api.onrender.com"
 
 TABLE_URL = f"{SUPABASE_URL}/rest/v1/submissions"
