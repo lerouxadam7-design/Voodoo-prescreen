@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.6-grading-v10.6-ui"
+MODEL_VERSION = "v9.6-grading-v10.6-ui-corner-storage"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -194,6 +194,8 @@ if "analysis_front_bytes" not in st.session_state:
     st.session_state.analysis_front_bytes = None
 if "analysis_back_bytes" not in st.session_state:
     st.session_state.analysis_back_bytes = None
+if "analysis_corner_bytes" not in st.session_state:
+    st.session_state.analysis_corner_bytes = {}
 if "slot_versions" not in st.session_state:
     st.session_state.slot_versions = {}
 if "player_name_edit" not in st.session_state:
@@ -352,6 +354,10 @@ def build_user_export_df(df: pd.DataFrame) -> pd.DataFrame:
         "surface_score",
         "front_image_url",
         "back_image_url",
+        "corner1_image_url",
+        "corner2_image_url",
+        "corner3_image_url",
+        "corner4_image_url",
     ]
     export_cols = [c for c in preferred_cols if c in df.columns]
     return df[export_cols].copy()
@@ -521,6 +527,7 @@ def reset_analysis_state():
     st.session_state.analysis_payload = None
     st.session_state.analysis_front_bytes = None
     st.session_state.analysis_back_bytes = None
+    st.session_state.analysis_corner_bytes = {}
     st.session_state.player_name_edit = ""
     st.session_state.last_save_success = False
 
@@ -586,6 +593,22 @@ def render_image_slot(label: str, slot_name: str, required: bool):
 
     st.markdown("</div>", unsafe_allow_html=True)
     return obj, mode
+
+
+def upload_optional_image(image_bytes, filename):
+    if image_bytes is None:
+        return None
+
+    resp = requests.post(
+        f"{SUPABASE_URL}/storage/v1/object/card-images/{filename}",
+        headers=upload_headers,
+        data=image_bytes,
+        timeout=60,
+    )
+    if resp.status_code not in [200, 201]:
+        raise RuntimeError(resp.text)
+
+    return f"{SUPABASE_URL}/storage/v1/object/public/card-images/{filename}"
 
 # ============================================================
 # HISTORICAL GRADE RANGE HELPERS
@@ -1259,18 +1282,25 @@ if st.button("Run Analysis"):
         v = manual_v_ratio
         st.info("Manual front centering applied")
 
-    corner_files = [corner1_obj, corner2_obj]
-    if corner3_obj is not None:
-        corner_files.append(corner3_obj)
-    if corner4_obj is not None:
-        corner_files.append(corner4_obj)
+    corner_inputs = {
+        "corner1": corner1_obj,
+        "corner2": corner2_obj,
+        "corner3": corner3_obj,
+        "corner4": corner4_obj,
+    }
 
     corner_scores = []
-    for c in corner_files:
+    corner_bytes_map = {}
+
+    for _, c in corner_inputs.items():
+        if c is None:
+            continue
+        c_bytes = c.getvalue()
+        corner_bytes_map[_] = c_bytes
         try:
             cr = requests.post(
                 f"{API_BASE}/analyze_corner",
-                files={"file": ("corner.jpg", c.getvalue(), "image/jpeg")},
+                files={"file": ("corner.jpg", c_bytes, "image/jpeg")},
                 timeout=60,
             )
         except Exception as e:
@@ -1413,6 +1443,7 @@ if st.button("Run Analysis"):
     }
     st.session_state.analysis_front_bytes = front_bytes
     st.session_state.analysis_back_bytes = back_bytes
+    st.session_state.analysis_corner_bytes = corner_bytes_map
     st.session_state.analysis_complete = True
 
 # ============================================================
@@ -1516,6 +1547,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     if st.button("Save Submission"):
         front_bytes = st.session_state.analysis_front_bytes
         back_bytes = st.session_state.analysis_back_bytes
+        corner_bytes_map = st.session_state.analysis_corner_bytes
 
         if front_bytes is None:
             st.error("Missing analyzed front image bytes.")
@@ -1525,29 +1557,28 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         front_name = f"{card_id}_front.jpg"
         back_name = f"{card_id}_back.jpg"
 
-        front_upload = requests.post(
-            f"{SUPABASE_URL}/storage/v1/object/card-images/{front_name}",
-            headers=upload_headers,
-            data=front_bytes,
-            timeout=60,
-        )
-        if front_upload.status_code not in [200, 201]:
-            st.error(f"Front upload failed: {front_upload.text}")
+        try:
+            front_url = upload_optional_image(front_bytes, front_name)
+        except Exception as e:
+            st.error(f"Front upload failed: {e}")
             st.stop()
 
+        back_url = None
         if back_bytes is not None:
-            back_upload = requests.post(
-                f"{SUPABASE_URL}/storage/v1/object/card-images/{back_name}",
-                headers=upload_headers,
-                data=back_bytes,
-                timeout=60,
-            )
-            if back_upload.status_code not in [200, 201]:
-                st.error(f"Back upload failed: {back_upload.text}")
+            try:
+                back_url = upload_optional_image(back_bytes, back_name)
+            except Exception as e:
+                st.error(f"Back upload failed: {e}")
                 st.stop()
 
-        front_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{front_name}"
-        back_url = f"{SUPABASE_URL}/storage/v1/object/public/card-images/{back_name}" if back_bytes else None
+        try:
+            corner1_url = upload_optional_image(corner_bytes_map.get("corner1"), f"{card_id}_corner1.jpg")
+            corner2_url = upload_optional_image(corner_bytes_map.get("corner2"), f"{card_id}_corner2.jpg")
+            corner3_url = upload_optional_image(corner_bytes_map.get("corner3"), f"{card_id}_corner3.jpg")
+            corner4_url = upload_optional_image(corner_bytes_map.get("corner4"), f"{card_id}_corner4.jpg")
+        except Exception as e:
+            st.error(f"Corner upload failed: {e}")
+            st.stop()
 
         payload = {
             "card_id": card_id,
@@ -1580,6 +1611,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "submit_label": json_safe(result["submit"]["submit_label"]),
             "front_image_url": json_safe(front_url),
             "back_image_url": json_safe(back_url),
+            "corner1_image_url": json_safe(corner1_url),
+            "corner2_image_url": json_safe(corner2_url),
+            "corner3_image_url": json_safe(corner3_url),
+            "corner4_image_url": json_safe(corner4_url),
             "submitted_by": user_email,
             "created_at": str(datetime.now()),
             "manual_centering_used": json_safe(result["use_manual_centering"]),
@@ -1594,6 +1629,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "grade_band_sample_size": json_safe(result["grade_range"]["sample_size"]),
             "grade_band_mae": json_safe(result["grade_range"]["mae"]),
             "front_image_hash": json_safe(result["front_image_hash"]),
+            "corner_count_used": json_safe(result["corner_count"]),
+            "used_surface_fallback": json_safe(result["used_surface_fallback"]),
         }
 
         if user_role == "admin":
@@ -1795,6 +1832,8 @@ if user_role == "admin":
         "confidence_percent",
         "submit_label",
         "manual_centering_used",
+        "corner_count_used",
+        "used_surface_fallback",
         "front_image_url",
         "card_id",
     ]
@@ -1808,7 +1847,7 @@ if user_role == "admin":
         worst_cols = [c for c in [
             "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
             "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "card_id"
+            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
@@ -1838,8 +1877,9 @@ if user_role == "admin":
     st.markdown("## Model Maintenance")
     st.markdown("""
     <div class="info-box">
-    Reanalysis below uses the saved front image to rerun current centering, edge, and surface analysis. 
-    Because corner image URLs are not stored in this app version, it reuses the saved historical corner score.
+    This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
+    reruns current corner analysis if corner image URLs are available,
+    then applies the current grading, confidence, and submit logic.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1848,34 +1888,46 @@ if user_role == "admin":
         status_box = st.empty()
         total_rows = len(df)
 
+        success_count = 0
+        fail_count = 0
+
         for idx, (_, row) in enumerate(df.iterrows(), start=1):
-            front_url = row.get("front_image_url")
-            if pd.isna(front_url) or not front_url:
-                progress.progress(idx / max(total_rows, 1))
-                continue
+            new_grade = None
+            confidence = {}
+            submit = {}
 
             try:
+                front_url = row.get("front_image_url")
+                if pd.isna(front_url) or not front_url:
+                    fail_count += 1
+                    progress.progress(idx / max(total_rows, 1))
+                    continue
+
                 img_resp = requests.get(front_url, timeout=60)
                 if img_resp.status_code != 200:
                     status_box.warning(f"Image fetch failed for card_id {row.get('card_id')}")
+                    fail_count += 1
                     progress.progress(idx / max(total_rows, 1))
                     continue
 
                 front_bytes = img_resp.content
+                front_image_hash = sha256_bytes(front_bytes)
 
-                ar = requests.post(
+                analyze_resp = requests.post(
                     f"{API_BASE}/analyze",
                     files={"file": ("front.jpg", front_bytes, "image/jpeg")},
                     timeout=60,
                 )
-                if ar.status_code != 200:
-                    status_box.warning(f"Analyze failed for card_id {row.get('card_id')}: {ar.text}")
+                if analyze_resp.status_code != 200:
+                    status_box.warning(f"Analyze failed for card_id {row.get('card_id')}: {analyze_resp.text}")
+                    fail_count += 1
                     progress.progress(idx / max(total_rows, 1))
                     continue
 
-                analyze_data = ar.json()
+                analyze_data = analyze_resp.json()
                 if "error" in analyze_data:
                     status_box.warning(f"Analyze error for card_id {row.get('card_id')}: {analyze_data['error']}")
+                    fail_count += 1
                     progress.progress(idx / max(total_rows, 1))
                     continue
 
@@ -1883,7 +1935,7 @@ if user_role == "admin":
                 v = float(analyze_data["vertical_ratio"])
                 edge = float(analyze_data["edge_score"])
 
-                sr = requests.post(
+                surface_resp = requests.post(
                     f"{API_BASE}/analyze_surface",
                     files={"file": ("front.jpg", front_bytes, "image/jpeg")},
                     timeout=60,
@@ -1895,8 +1947,8 @@ if user_role == "admin":
                 row_gloss = None
                 used_surface_fallback = False
 
-                if sr.status_code == 200:
-                    surface_json = sr.json()
+                if surface_resp.status_code == 200:
+                    surface_json = surface_resp.json()
                     if "error" not in surface_json:
                         row_surface = surface_json.get("surface_score")
                         row_scratch = surface_json.get("scratch_score")
@@ -1907,7 +1959,45 @@ if user_role == "admin":
                     row_surface = 0.12
                     used_surface_fallback = True
 
-                corner = float(row.get("corner_score")) if not pd.isna(row.get("corner_score")) else 0.5
+                corner_urls = [
+                    row.get("corner1_image_url"),
+                    row.get("corner2_image_url"),
+                    row.get("corner3_image_url"),
+                    row.get("corner4_image_url"),
+                ]
+
+                fresh_corner_scores = []
+                for cu in corner_urls:
+                    if pd.isna(cu) or not cu:
+                        continue
+
+                    try:
+                        corner_img_resp = requests.get(cu, timeout=60)
+                        if corner_img_resp.status_code != 200:
+                            continue
+
+                        corner_resp = requests.post(
+                            f"{API_BASE}/analyze_corner",
+                            files={"file": ("corner.jpg", corner_img_resp.content, "image/jpeg")},
+                            timeout=60,
+                        )
+                        if corner_resp.status_code != 200:
+                            continue
+
+                        corner_json = corner_resp.json()
+                        if "error" in corner_json:
+                            continue
+
+                        fresh_corner_scores.append(float(corner_json["corner_score"]))
+                    except Exception:
+                        continue
+
+                if len(fresh_corner_scores) == 0:
+                    corner = float(row.get("corner_score")) if not pd.isna(row.get("corner_score")) else 0.5
+                    corner_count_used = 0
+                else:
+                    corner = min(fresh_corner_scores)
+                    corner_count_used = len(fresh_corner_scores)
 
                 new_grade = compute_grade(h, v, edge, corner, float(row_surface))
 
@@ -1918,7 +2008,7 @@ if user_role == "admin":
                     corner=corner,
                     surface=float(row_surface),
                     used_surface_fallback=used_surface_fallback,
-                    corner_count=2,
+                    corner_count=corner_count_used,
                 )
 
                 submit = compute_submit_probability(
@@ -1962,6 +2052,10 @@ if user_role == "admin":
                     "submit_label": json_safe(submit["submit_label"]),
                     "front_image_url": json_safe(row.get("front_image_url")),
                     "back_image_url": json_safe(row.get("back_image_url")),
+                    "corner1_image_url": json_safe(row.get("corner1_image_url")),
+                    "corner2_image_url": json_safe(row.get("corner2_image_url")),
+                    "corner3_image_url": json_safe(row.get("corner3_image_url")),
+                    "corner4_image_url": json_safe(row.get("corner4_image_url")),
                     "submitted_by": json_safe(row.get("submitted_by")),
                     "created_at": str(datetime.now()),
                     "manual_centering_used": json_safe(row.get("manual_centering_used")),
@@ -1976,23 +2070,29 @@ if user_role == "admin":
                     "grade_range_high": json_safe(current_grade_range["range_high"]),
                     "grade_band_sample_size": json_safe(current_grade_range["sample_size"]),
                     "grade_band_mae": json_safe(current_grade_range["mae"]),
-                    "front_image_hash": json_safe(row.get("front_image_hash")),
+                    "front_image_hash": json_safe(front_image_hash),
+                    "corner_count_used": json_safe(corner_count_used),
                 }
 
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
                 if post_resp.status_code not in [200, 201]:
                     status_box.warning(f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}")
+                    fail_count += 1
+                else:
+                    success_count += 1
 
             except Exception as e:
                 status_box.warning(f"Reanalysis exception for source card_id {row.get('card_id')}: {e}")
+                fail_count += 1
 
             status_box.write(
                 f"Processed {idx}/{total_rows} | "
                 f"source_card_id={row.get('card_id')} | "
-                f"grade={locals().get('new_grade', 'n/a')} | "
-                f"confidence={locals().get('confidence', {}).get('confidence_percent', 'n/a')} | "
-                f"submit={locals().get('submit', {}).get('submit_label', 'n/a')}"
+                f"grade={new_grade if new_grade is not None else 'n/a'} | "
+                f"confidence={confidence.get('confidence_percent', 'n/a')} | "
+                f"submit={submit.get('submit_label', 'n/a')} | "
+                f"saved={success_count} | failed={fail_count}"
             )
             progress.progress(idx / max(total_rows, 1))
 
-        st.success("True reanalysis completed and saved as new submissions.")
+        st.success(f"True reanalysis completed. Saved {success_count} row(s), failed {fail_count}.")
