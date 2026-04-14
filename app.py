@@ -154,7 +154,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6.1-admin-fix-grade-range"
+MODEL_VERSION = "v10.6.1-LOCKED"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -991,7 +991,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-</div>
+    <div>• Use dark contrasting background</div>
 """, unsafe_allow_html=True)
 
 if user_email:
