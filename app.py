@@ -151,6 +151,14 @@ tbody tr td {
     padding: 0.5rem;
     background: rgba(255,255,255,0.03);
 }
+.manual-center-wrap {
+    max-width: 330px;
+}
+.manual-center-image-note {
+    font-size: 0.78rem;
+    color: #dddddd;
+    margin-bottom: 8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1103,6 +1111,7 @@ if st.button("Load My Submission Data"):
 # ============================================================
 
 st.markdown("## Card Information")
+user_entered_player_name = st.text_input("Player Name")
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
@@ -1181,31 +1190,33 @@ if use_manual_centering:
             st.error(f"Could not open front image: {e}")
             st.stop()
 
-        max_display_width = 450
+        max_display_width = 260
         scale = min(1.0, max_display_width / front_image.width)
         display_width = int(front_image.width * scale)
         display_height = int(front_image.height * scale)
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="small-note">Image rotated 90 degrees clockwise for manual centering. Use fine sliders for precise mobile adjustment.</div>',
+            '<div class="manual-center-image-note">Image rotated 90 degrees clockwise for manual centering. Use the sliders below to line up the card edges.</div>',
             unsafe_allow_html=True
         )
 
-        col_a, col_b = st.columns([1, 1.1])
-        with col_a:
-            left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
-            right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
-            top_percent = st.slider("Top", 0.0, 100.0, 8.0, step=0.1)
-            bottom_percent = st.slider("Bottom", 0.0, 100.0, 92.0, step=0.1)
+        st.markdown('<div class="manual-center-wrap">', unsafe_allow_html=True)
+
+        left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
+        right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
+        top_percent = st.slider("Top", 0.0, 100.0, 8.0, step=0.1)
+        bottom_percent = st.slider("Bottom", 0.0, 100.0, 92.0, step=0.1)
 
         left_x = (left_percent / 100.0) * display_width
         right_x = (right_percent / 100.0) * display_width
         top_y = (top_percent / 100.0) * display_height
         bottom_y = (bottom_percent / 100.0) * display_height
 
-        with col_b:
-            render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
+        st.markdown("### Centering Preview")
+        render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
         if right_x <= left_x or bottom_y <= top_y:
             st.error("Right must be right of left, and bottom must be below top.")
@@ -1372,7 +1383,10 @@ if st.button("Run Analysis"):
     detected_player_confidence = player_meta.get("player_name_confidence")
     detected_player_source = player_meta.get("player_name_source")
 
-    st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
+    if user_entered_player_name and str(user_entered_player_name).strip():
+        st.session_state.player_name_edit = str(user_entered_player_name).strip()
+    else:
+        st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     grade = compute_grade(h, v, edge, corner, float(surface))
 
@@ -1403,6 +1417,7 @@ if st.button("Run Analysis"):
     )
 
     st.session_state.analysis_payload = {
+        "user_entered_player_name": user_entered_player_name,
         "manufacturer": manufacturer,
         "stock_type": stock_type,
         "psa_is_graded": psa_is_graded,
@@ -1456,8 +1471,14 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     detected_player_name = result["detected_player_name"]
     detected_player_confidence = result["detected_player_confidence"]
     detected_player_source = result["detected_player_source"]
+    typed_player_name = result.get("user_entered_player_name")
 
     st.markdown("### Player Name")
+
+    if typed_player_name and str(typed_player_name).strip():
+        if not st.session_state.player_name_edit:
+            st.session_state.player_name_edit = str(typed_player_name).strip()
+
     if detected_player_name:
         msg = f"Detected player: {detected_player_name}"
         if detected_player_confidence is not None:
@@ -1469,11 +1490,19 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     st.text_input("Player Name (edit or confirm before save)", key="player_name_edit")
 
     final_player_name = st.session_state.player_name_edit.strip() if st.session_state.player_name_edit else None
-    final_player_name_confidence = detected_player_confidence if detected_player_name else None
 
-    if final_player_name and final_player_name != detected_player_name:
-        final_player_name_source = "manual_override"
+    if final_player_name:
+        if detected_player_name and final_player_name == detected_player_name:
+            final_player_name_confidence = detected_player_confidence
+            final_player_name_source = detected_player_source
+        elif typed_player_name and final_player_name == str(typed_player_name).strip():
+            final_player_name_confidence = None
+            final_player_name_source = "user_entered"
+        else:
+            final_player_name_confidence = None
+            final_player_name_source = "manual_override"
     else:
+        final_player_name_confidence = detected_player_confidence if detected_player_name else None
         final_player_name_source = detected_player_source
 
     if result["preview_pack"] is not None:
