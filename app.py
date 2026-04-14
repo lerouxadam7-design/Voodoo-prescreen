@@ -145,6 +145,12 @@ tbody tr td {
     margin-top: 10px;
     margin-bottom: 10px;
 }
+.preview-card {
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    padding: 0.5rem;
+    background: rgba(255,255,255,0.03);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -154,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6.1-LOCKED"
+MODEL_VERSION = "v9.6-grading-v10.6-ui"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -190,6 +196,8 @@ if "analysis_back_bytes" not in st.session_state:
     st.session_state.analysis_back_bytes = None
 if "slot_versions" not in st.session_state:
     st.session_state.slot_versions = {}
+if "player_name_edit" not in st.session_state:
+    st.session_state.player_name_edit = ""
 
 # ============================================================
 # HELPERS
@@ -355,9 +363,16 @@ def pil_to_base64(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y: float, bottom_y: float) -> None:
+def render_overlay_image(
+    img: Image.Image,
+    left_x: float,
+    right_x: float,
+    top_y: float,
+    bottom_y: float
+) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
+
     html = f"""
     <div style="
         position: relative;
@@ -369,7 +384,15 @@ def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y:
     ">
         <img
             src="data:image/png;base64,{img_b64}"
-            style="position:absolute;top:0;left:0;width:{width}px;height:{height}px;object-fit:contain;z-index:1;"
+            style="
+                position:absolute;
+                top:0;
+                left:0;
+                width:{width}px;
+                height:{height}px;
+                object-fit:contain;
+                z-index:1;
+            "
         />
         <div style="position:absolute;top:0;left:{left_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
         <div style="position:absolute;top:0;left:{right_x}px;width:2px;height:{height}px;background:#00FF00;z-index:2;"></div>
@@ -380,9 +403,49 @@ def render_overlay_image(img: Image.Image, left_x: float, right_x: float, top_y:
     components.html(html, height=height + 8, width=width + 8, scrolling=False)
 
 
+def build_card_preview_with_overlay(
+    image_bytes: bytes,
+    horizontal_ratio: float = None,
+    vertical_ratio: float = None,
+    max_width: int = 320
+):
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        return None
+
+    scale = min(1.0, max_width / img.width)
+    new_size = (int(img.width * scale), int(img.height * scale))
+    preview = img.resize(new_size)
+
+    w, h = preview.size
+
+    if horizontal_ratio is None or vertical_ratio is None:
+        return preview
+
+    try:
+        r_h = max(0.01, min(1.0, float(horizontal_ratio)))
+        r_v = max(0.01, min(1.0, float(vertical_ratio)))
+    except Exception:
+        return preview
+
+    left_prop = r_h / (1 + r_h)
+    right_prop = 1 / (1 + r_h)
+    top_prop = r_v / (1 + r_v)
+    bottom_prop = 1 / (1 + r_v)
+
+    left_x = int(w * left_prop)
+    right_x = int(w * right_prop)
+    top_y = int(h * top_prop)
+    bottom_y = int(h * bottom_prop)
+
+    return preview, left_x, right_x, top_y, bottom_y
+
+
 def backfill_surface_from_url(front_image_url: str):
     if not front_image_url:
         return None, None, None, None
+
     try:
         img_resp = requests.get(front_image_url, timeout=60)
         if img_resp.status_code != 200:
@@ -393,6 +456,7 @@ def backfill_surface_from_url(front_image_url: str):
             files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
             timeout=60,
         )
+
         if sr.status_code != 200:
             return None, None, None, None
 
@@ -410,20 +474,46 @@ def backfill_surface_from_url(front_image_url: str):
         return None, None, None, None
 
 
+def detect_player_name(front_bytes: bytes) -> dict:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/extract_card_metadata",
+            files={"file": ("front.jpg", front_bytes, "image/jpeg")},
+            timeout=60,
+        )
+
+        if resp.status_code != 200:
+            return {
+                "player_name": None,
+                "player_name_confidence": None,
+                "player_name_source": "unavailable",
+            }
+
+        data = resp.json()
+        if "error" in data:
+            return {
+                "player_name": None,
+                "player_name_confidence": None,
+                "player_name_source": "error",
+            }
+
+        return {
+            "player_name": data.get("player_name"),
+            "player_name_confidence": data.get("player_name_confidence"),
+            "player_name_source": data.get("player_name_source", "vision"),
+        }
+    except Exception:
+        return {
+            "player_name": None,
+            "player_name_confidence": None,
+            "player_name_source": "unavailable",
+        }
+
+
 def validation_status(label: str, passed: bool):
     text = "OK" if passed else "Missing"
     css = "status-good" if passed else "status-bad"
     st.markdown(f"{label}: <span class='{css}'>{text}</span>", unsafe_allow_html=True)
-
-
-def build_analysis_notes(corner_count_used: int, used_surface_fallback: bool, use_manual_centering: bool) -> str:
-    notes = []
-    if use_manual_centering:
-        notes.append("manual_centering_used")
-    if used_surface_fallback:
-        notes.append("surface_fallback_used")
-    notes.append(f"corner_count={corner_count_used}")
-    return ", ".join(notes)
 
 
 def reset_analysis_state():
@@ -431,6 +521,7 @@ def reset_analysis_state():
     st.session_state.analysis_payload = None
     st.session_state.analysis_front_bytes = None
     st.session_state.analysis_back_bytes = None
+    st.session_state.player_name_edit = ""
     st.session_state.last_save_success = False
 
 
@@ -496,7 +587,6 @@ def render_image_slot(label: str, slot_name: str, required: bool):
     st.markdown("</div>", unsafe_allow_html=True)
     return obj, mode
 
-
 # ============================================================
 # HISTORICAL GRADE RANGE HELPERS
 # ============================================================
@@ -549,18 +639,13 @@ def build_grade_range_table(df: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     for band, g in work.groupby("predicted_grade_band", dropna=False):
-        sample = len(g)
-        mae = float(g["abs_error"].mean())
-        bias = float(g["error"].mean())
-        p10 = float(g["psa_actual_grade"].quantile(0.10))
-        p90 = float(g["psa_actual_grade"].quantile(0.90))
         rows.append({
             "predicted_grade_band": band,
-            "sample_size": sample,
-            "mae": round(mae, 3),
-            "bias": round(bias, 3),
-            "range_low": round(p10, 2),
-            "range_high": round(p90, 2),
+            "sample_size": len(g),
+            "mae": round(float(g["abs_error"].mean()), 3),
+            "bias": round(float(g["error"].mean()), 3),
+            "range_low": round(float(g["psa_actual_grade"].quantile(0.10)), 2),
+            "range_high": round(float(g["psa_actual_grade"].quantile(0.90)), 2),
         })
 
     out = pd.DataFrame(rows)
@@ -607,7 +692,7 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# GRADE MODEL
+# V9.6 GRADE MODEL
 # ============================================================
 
 def compute_fitted_grade(
@@ -620,21 +705,16 @@ def compute_fitted_grade(
     v_good = 1.0 - float(vertical_ratio)
     corner_bad = float(corner_score)
     edge_bad = float(edge_score)
-    surface_bad = min(float(surface_score), 0.16)
+    surface_bad = float(surface_score)
 
     grade = (
         8.35
         + 0.25 * v_good
         - 0.47 * corner_bad
         - 0.94 * edge_bad
-        + 32.0 * surface_bad
-        - 300.0 * (surface_bad ** 2)
+        + 38.67 * surface_bad
+        - 350.94 * (surface_bad ** 2)
     )
-
-    if grade >= 9.0:
-        grade += 0.15
-    elif grade <= 7.5:
-        grade -= 0.15
 
     return round(max(1.0, min(10.0, grade)), 2)
 
@@ -658,22 +738,24 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": overall,
         "candidate_grade": overall,
-        "base_fitted_grade": overall,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
         "surface_cap": round(surface_cap, 2),
         "weakest_cap": round(min(cap_values.values()), 2),
         "limiter": limiting_feature,
+        "centering_strength": round(centering_cap / 10.0, 3),
+        "corner_strength": round(corner_cap / 10.0, 3),
+        "edge_strength": round(edge_cap / 10.0, 3),
+        "surface_strength": round(surface_cap / 10.0, 3),
     }
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
     return compute_fitted_grade(h, v, corner, edge, surface)
 
-
 # ============================================================
-# CONFIDENCE
+# V9.6 CONFIDENCE
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -700,55 +782,14 @@ def band_distance_surface(surface: float) -> float:
     return min(abs(s - t) for t in thresholds)
 
 
-def grade_boundary_distance(grade: float) -> float:
-    boundaries = [8.6, 9.0, 9.4, 10.0]
-    return min(abs(float(grade) - b) for b in boundaries)
-
-
-def normalize_glare_fraction(glare_fraction) -> float:
-    if glare_fraction is None:
-        return 0.0
-    return float(max(0.0, min(1.0, float(glare_fraction) / 0.35)))
-
-
-def normalize_valid_surface_fraction(valid_surface_fraction) -> float:
-    if valid_surface_fraction is None:
-        return 1.0
-    return float(max(0.0, min(1.0, (float(valid_surface_fraction) - 0.35) / 0.55)))
-
-
-def stock_confidence_adjustment(stock_type: str, glare_fraction: float, gloss_score: float) -> float:
-    stock = (stock_type or "").lower()
-    glare_norm = normalize_glare_fraction(glare_fraction)
-    gloss = 0.0 if gloss_score is None else float(max(0.0, min(1.0, gloss_score)))
-
-    penalty = 0.0
-    if stock in ["chrome", "refractor", "foil"]:
-        penalty += 0.10 * glare_norm
-        penalty += 0.06 * gloss
-    elif stock == "paper":
-        penalty += 0.03 * glare_norm
-        penalty += 0.02 * gloss
-    else:
-        penalty += 0.06 * glare_norm
-        penalty += 0.04 * gloss
-    return penalty
-
-
 def compute_confidence(
     h: float,
     v: float,
     edge: float,
     corner: float,
     surface: float,
-    grade: float,
-    stock_type: str = "",
-    manual_centering_used: bool = False,
     used_surface_fallback: bool = False,
-    corner_count: int = 0,
-    glare_fraction: float = None,
-    valid_surface_fraction: float = None,
-    gloss_score: float = None,
+    corner_count: int = 0
 ) -> dict:
     centering_band = centering_psa_grade(h, v)
     corner_band = corner_grade_band(corner)
@@ -756,75 +797,55 @@ def compute_confidence(
     surface_band = surface_grade_band(surface)
 
     bands = [centering_band, corner_band, edge_band, surface_band]
+
     spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 6.0))
+    agreement_score = max(0.0, 1.0 - (spread / 4.0))
 
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
     d_surface = band_distance_surface(surface)
 
-    center_conf = min(1.0, d_center / 0.085)
-    corner_conf = min(1.0, d_corner / 0.14)
-    edge_conf = min(1.0, d_edge / 0.020)
-    surface_conf = min(1.0, d_surface / 0.055)
+    center_conf = min(1.0, d_center / 0.05)
+    corner_conf = min(1.0, d_corner / 0.08)
+    edge_conf = min(1.0, d_edge / 0.01)
+    surface_conf = min(1.0, d_surface / 0.03)
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
     data_score = 1.0
     if used_surface_fallback:
-        data_score -= 0.12
-    if corner_count < 2:
         data_score -= 0.20
+    if corner_count < 2:
+        data_score -= 0.25
     elif corner_count == 2:
-        data_score -= 0.03
-    elif corner_count >= 4:
-        data_score += 0.03
-    if manual_centering_used:
-        data_score += 0.04
+        data_score -= 0.05
 
-    valid_surface_norm = normalize_valid_surface_fraction(valid_surface_fraction)
-    glare_norm = normalize_glare_fraction(glare_fraction)
-
-    if valid_surface_fraction is not None:
-        data_score += 0.08 * (valid_surface_norm - 0.5)
-    if glare_fraction is not None:
-        data_score -= 0.08 * glare_norm
-
-    data_score -= stock_confidence_adjustment(stock_type, glare_fraction, gloss_score)
     data_score = max(0.0, min(1.0, data_score))
 
-    boundary_dist = grade_boundary_distance(grade)
-    boundary_score = min(1.0, boundary_dist / 0.35)
-
     confidence_raw = (
-        0.38 * agreement_score +
-        0.27 * threshold_score +
-        0.25 * data_score +
-        0.10 * boundary_score
+        0.45 * agreement_score +
+        0.40 * threshold_score +
+        0.15 * data_score
     )
 
     confidence_raw = max(0.0, min(1.0, confidence_raw))
-    confidence_percent = round(confidence_raw * 100.0, 1)
 
-    if confidence_percent >= 78:
+    if confidence_raw >= 0.80:
         label = "High"
-    elif confidence_percent >= 58:
+    elif confidence_raw >= 0.60:
         label = "Moderate"
     else:
         label = "Low"
 
     return {
         "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": confidence_percent,
+        "confidence_percent": round(confidence_raw * 100, 1),
         "confidence_label": label,
         "agreement_score": round(agreement_score, 3),
         "threshold_score": round(threshold_score, 3),
         "data_score": round(data_score, 3),
         "band_spread": round(spread, 2),
-        "boundary_score": round(boundary_score, 3),
-        "glare_fraction_used": None if glare_fraction is None else round(float(glare_fraction), 3),
-        "valid_surface_fraction_used": None if valid_surface_fraction is None else round(float(valid_surface_fraction), 3),
         "centering_band": centering_band,
         "corner_band": corner_band,
         "edge_band": edge_band,
@@ -832,12 +853,18 @@ def compute_confidence(
     }
 
 # ============================================================
-# SUBMIT LOGIC
+# V9.6 SUBMIT RULES
 # ============================================================
 
-def compute_submit_probability(grade: float, confidence_score: float, surface: float, band_spread: float) -> dict:
+def compute_submit_probability(
+    grade: float,
+    confidence_score: float,
+    surface: float,
+    band_spread: float
+) -> dict:
     confidence_percent = confidence_score * 100.0
-    if grade >= 9.4 and confidence_percent >= 85.0:
+
+    if grade >= 9.3 and confidence_percent >= 85.0:
         label = "Strong Submit"
         probability = 0.95
     elif grade >= 9.3 and confidence_percent < 85.0:
@@ -869,7 +896,7 @@ def decision_panel_admin(
     surface: float,
     confidence: dict,
     submit: dict,
-    grade_range: dict,
+    grade_range: dict
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
@@ -891,8 +918,8 @@ def decision_panel_admin(
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.78 else
-        "Moderate" if confidence["confidence_score"] >= 0.58 else
+        "Low" if confidence["confidence_score"] >= 0.80 else
+        "Moderate" if confidence["confidence_score"] >= 0.60 else
         "High"
     )
     st.write("Limiting Feature:", caps["limiter"])
@@ -918,12 +945,7 @@ def decision_panel_admin(
     st.write("Agreement Score:", confidence["agreement_score"])
     st.write("Threshold Score:", confidence["threshold_score"])
     st.write("Data Quality Score:", confidence["data_score"])
-    st.write("Boundary Score:", confidence["boundary_score"])
     st.write("Band Spread:", confidence["band_spread"])
-    if confidence.get("glare_fraction_used") is not None:
-        st.write("Glare Fraction Used:", confidence["glare_fraction_used"])
-    if confidence.get("valid_surface_fraction_used") is not None:
-        st.write("Valid Surface Fraction Used:", confidence["valid_surface_fraction_used"])
 
     st.markdown("### Fitted Formula Output")
     st.write("Predicted Grade:", caps["candidate_grade"])
@@ -942,7 +964,7 @@ def decision_panel_user(
     surface: float,
     confidence: dict,
     submit: dict,
-    grade_range: dict,
+    grade_range: dict
 ) -> None:
     if submit["submit_label"] == "Strong Submit":
         st.success("STRONG SUBMIT")
@@ -991,7 +1013,7 @@ st.markdown("""
     <div>• All pictures taken from same height/zoom with similar lighting</div>
     <div>• Take pictures of all 4 front corners</div>
     <div>• Use manual centering</div>
-    <div>• Use dark contrasting background</div>
+</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -1030,13 +1052,14 @@ except Exception:
     range_table = pd.DataFrame()
 
 # ============================================================
-# USER SUBMISSION DATA PREVIEW + DOWNLOAD
+# USER DATA DOWNLOAD
 # ============================================================
 
 st.markdown("## My Submission Data")
 
 if st.button("Load My Submission Data"):
     user_df = get_user_submissions(user_email)
+
     if user_df.empty:
         st.warning("No submissions found for this email.")
     else:
@@ -1057,7 +1080,6 @@ if st.button("Load My Submission Data"):
 # ============================================================
 
 st.markdown("## Card Information")
-player_name = st.text_input("Player Name (Optional)")
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
 
@@ -1281,8 +1303,6 @@ if st.button("Run Analysis"):
     scratch_score = None
     speckle_score = None
     gloss_score = None
-    glare_fraction = None
-    valid_surface_fraction = None
     surface_data = None
     used_surface_fallback = False
 
@@ -1309,8 +1329,6 @@ if st.button("Run Analysis"):
             scratch_score = surface_data.get("scratch_score")
             speckle_score = surface_data.get("speckle_score")
             gloss_score = surface_data.get("gloss_score")
-            glare_fraction = surface_data.get("glare_fraction")
-            valid_surface_fraction = surface_data.get("valid_surface_fraction")
     elif sr is not None:
         st.warning(f"Surface API failed: {sr.text}")
 
@@ -1318,6 +1336,13 @@ if st.button("Run Analysis"):
         surface = 0.12
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
+
+    player_meta = detect_player_name(front_bytes)
+    detected_player_name = player_meta.get("player_name")
+    detected_player_confidence = player_meta.get("player_name_confidence")
+    detected_player_source = player_meta.get("player_name_source")
+
+    st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     grade = compute_grade(h, v, edge, corner, float(surface))
 
@@ -1327,14 +1352,8 @@ if st.button("Run Analysis"):
         edge=edge,
         corner=corner,
         surface=float(surface),
-        grade=grade,
-        stock_type=stock_type,
-        manual_centering_used=use_manual_centering,
         used_surface_fallback=used_surface_fallback,
         corner_count=len(corner_scores),
-        glare_fraction=glare_fraction,
-        valid_surface_fraction=valid_surface_fraction,
-        gloss_score=gloss_score,
     )
 
     submit = compute_submit_probability(
@@ -1346,8 +1365,14 @@ if st.button("Run Analysis"):
 
     grade_range = lookup_grade_range(grade, range_table)
 
-    frozen_payload = {
-        "player_name": player_name,
+    preview_pack = build_card_preview_with_overlay(
+        image_bytes=front_bytes,
+        horizontal_ratio=h,
+        vertical_ratio=v,
+        max_width=320
+    )
+
+    st.session_state.analysis_payload = {
         "manufacturer": manufacturer,
         "stock_type": stock_type,
         "psa_is_graded": psa_is_graded,
@@ -1367,18 +1392,17 @@ if st.button("Run Analysis"):
         "scratch_score": scratch_score,
         "speckle_score": speckle_score,
         "gloss_score": gloss_score,
-        "glare_fraction": glare_fraction,
-        "valid_surface_fraction": valid_surface_fraction,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
-        "base_fitted_grade": grade,
         "grade": grade,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
-        "corner_count_used": len(corner_scores),
-        "analysis_success": True,
-        "analysis_notes": build_analysis_notes(len(corner_scores), used_surface_fallback, use_manual_centering),
+        "preview_pack": preview_pack,
+        "detected_player_name": detected_player_name,
+        "detected_player_confidence": detected_player_confidence,
+        "detected_player_source": detected_player_source,
+        "corner_count": len(corner_scores),
         "front_image_hash": front_image_hash,
         "front_source_mode": front_mode,
         "back_source_mode": back_mode,
@@ -1387,8 +1411,6 @@ if st.button("Run Analysis"):
         "corner3_source_mode": corner3_mode if corner3_obj is not None else None,
         "corner4_source_mode": corner4_mode if corner4_obj is not None else None,
     }
-
-    st.session_state.analysis_payload = frozen_payload
     st.session_state.analysis_front_bytes = front_bytes
     st.session_state.analysis_back_bytes = back_bytes
     st.session_state.analysis_complete = True
@@ -1400,26 +1422,35 @@ if st.button("Run Analysis"):
 if st.session_state.analysis_complete and st.session_state.analysis_payload is not None:
     result = st.session_state.analysis_payload
 
-    if user_role == "admin":
-        try:
-            dup_resp = requests.get(
-                f"{TABLE_URL}?front_image_hash=eq.{result['front_image_hash']}&select=card_id,created_at,submitted_by,player_name,manufacturer",
-                headers=headers,
-                timeout=30,
-            )
-            if dup_resp.status_code == 200:
-                dup_rows = dup_resp.json()
-                if len(dup_rows) > 0:
-                    st.warning(f"Possible duplicate detected: {len(dup_rows)} existing submission(s) share this front image hash.")
-                    st.dataframe(pd.DataFrame(dup_rows), use_container_width=True, hide_index=True)
-        except Exception:
-            pass
+    detected_player_name = result["detected_player_name"]
+    detected_player_confidence = result["detected_player_confidence"]
+    detected_player_source = result["detected_player_source"]
 
-    st.markdown("""
-    <div class="info-box">
-        Automatic card preview overlay remains disabled. Auto centering still runs in the backend, and manual centering remains available above.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### Player Name")
+    if detected_player_name:
+        msg = f"Detected player: {detected_player_name}"
+        if detected_player_confidence is not None:
+            msg += f" ({round(float(detected_player_confidence) * 100, 1)}%)"
+        st.write(msg)
+    else:
+        st.write("Detected player: Not found")
+
+    st.text_input("Player Name (edit or confirm before save)", key="player_name_edit")
+
+    final_player_name = st.session_state.player_name_edit.strip() if st.session_state.player_name_edit else None
+    final_player_name_confidence = detected_player_confidence if detected_player_name else None
+
+    if final_player_name and final_player_name != detected_player_name:
+        final_player_name_source = "manual_override"
+    else:
+        final_player_name_source = detected_player_source
+
+    if result["preview_pack"] is not None:
+        preview_img, left_x, right_x, top_y, bottom_y = result["preview_pack"]
+        st.markdown("### Card Preview")
+        st.markdown('<div class="preview-card">', unsafe_allow_html=True)
+        render_overlay_image(preview_img, left_x, right_x, top_y, bottom_y)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("## Grade")
     st.markdown(f"### {result['grade']}")
@@ -1449,13 +1480,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["grade_range"],
         )
 
-    if result["used_surface_fallback"] and user_role == "admin":
-        st.warning("Surface fallback was used for this analysis.")
-
     st.markdown("## About to Save")
     s1, s2, s3 = st.columns(3)
     with s1:
-        st.write("Player Name:", result["player_name"] or "—")
+        st.write("Player Name:", final_player_name or "—")
         st.write("Manufacturer:", result["manufacturer"] or "—")
     with s2:
         st.write("Stock Type:", result["stock_type"] or "—")
@@ -1474,10 +1502,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
-        st.write("Base Fitted Grade:", round(float(result["base_fitted_grade"]), 2))
-        st.write("Corner Count Used:", result["corner_count_used"])
+        st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
-        st.write("Analysis Notes:", result["analysis_notes"])
         st.write("Front Source:", result["front_source_mode"])
         st.write("Back Source:", result["back_source_mode"])
         if result["scratch_score"] is not None:
@@ -1486,10 +1512,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             st.write("Speckle Score:", round(float(result["speckle_score"]), 4))
         if result["gloss_score"] is not None:
             st.write("Gloss Score:", round(float(result["gloss_score"]), 4))
-        if result["glare_fraction"] is not None:
-            st.write("Glare Fraction:", round(float(result["glare_fraction"]), 4))
-        if result["valid_surface_fraction"] is not None:
-            st.write("Valid Surface Fraction:", round(float(result["valid_surface_fraction"]), 4))
 
     if st.button("Save Submission"):
         front_bytes = st.session_state.analysis_front_bytes
@@ -1530,11 +1552,13 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         payload = {
             "card_id": card_id,
             "model_version": MODEL_VERSION,
-            "player_name": json_safe(result["player_name"].strip() if isinstance(result["player_name"], str) else result["player_name"]),
             "manufacturer": json_safe(result["manufacturer"]),
             "stock_type": json_safe(result["stock_type"]),
             "psa_is_graded": json_safe(result["psa_is_graded"]),
             "psa_actual_grade": json_safe(result["psa_actual_grade"]),
+            "player_name": json_safe(final_player_name),
+            "player_name_confidence": json_safe(final_player_name_confidence),
+            "player_name_source": json_safe(final_player_name_source),
             "horizontal_ratio": json_safe(result["horizontal_ratio"]),
             "vertical_ratio": json_safe(result["vertical_ratio"]),
             "edge_score": json_safe(result["edge_score"]),
@@ -1565,15 +1589,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "front_bottom_measurement": json_safe(result["manual_bottom"] if result["use_manual_centering"] else None),
             "front_horizontal_ratio_manual": json_safe(result["manual_h_ratio"] if result["use_manual_centering"] else None),
             "front_vertical_ratio_manual": json_safe(result["manual_v_ratio"] if result["use_manual_centering"] else None),
-            "corner_count_used": json_safe(result["corner_count_used"]),
-            "used_surface_fallback": json_safe(result["used_surface_fallback"]),
-            "analysis_success": True,
-            "analysis_notes": json_safe(result["analysis_notes"]),
-            "front_image_hash": json_safe(result["front_image_hash"]),
             "grade_range_low": json_safe(result["grade_range"]["range_low"]),
             "grade_range_high": json_safe(result["grade_range"]["range_high"]),
             "grade_band_sample_size": json_safe(result["grade_range"]["sample_size"]),
             "grade_band_mae": json_safe(result["grade_range"]["mae"]),
+            "front_image_hash": json_safe(result["front_image_hash"]),
         }
 
         if user_role == "admin":
@@ -1585,8 +1605,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload submit_label:", payload["submit_label"])
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
-                st.write("DEBUG front source mode:", result["front_source_mode"])
-                st.write("DEBUG back source mode:", result["back_source_mode"])
                 st.write("DEBUG grade range:", result["grade_range"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
@@ -1777,8 +1795,6 @@ if user_role == "admin":
         "confidence_percent",
         "submit_label",
         "manual_centering_used",
-        "corner_count_used",
-        "used_surface_fallback",
         "front_image_url",
         "card_id",
     ]
@@ -1792,7 +1808,7 @@ if user_role == "admin":
         worst_cols = [c for c in [
             "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
             "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
+            "manual_centering_used", "card_id"
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
@@ -1820,147 +1836,163 @@ if user_role == "admin":
 
     st.markdown("---")
     st.markdown("## Model Maintenance")
+    st.markdown("""
+    <div class="info-box">
+    Reanalysis below uses the saved front image to rerun current centering, edge, and surface analysis. 
+    Because corner image URLs are not stored in this app version, it reuses the saved historical corner score.
+    </div>
+    """, unsafe_allow_html=True)
 
-    if st.button("Re-Score All Cards"):
+    if st.button("True Reanalyze Saved Cards"):
         progress = st.progress(0)
         status_box = st.empty()
         total_rows = len(df)
 
         for idx, (_, row) in enumerate(df.iterrows(), start=1):
-            if pd.isna(row.get("horizontal_ratio")) or pd.isna(row.get("vertical_ratio")):
+            front_url = row.get("front_image_url")
+            if pd.isna(front_url) or not front_url:
                 progress.progress(idx / max(total_rows, 1))
                 continue
 
-            row_surface = row.get("surface_score")
-            row_scratch = row.get("scratch_score")
-            row_speckle = row.get("speckle_score")
-            row_gloss = row.get("gloss_score")
-
-            if pd.isna(row_surface):
-                fetched_surface, fetched_scratch, fetched_speckle, fetched_gloss = backfill_surface_from_url(
-                    row.get("front_image_url")
-                )
-                if fetched_surface is not None:
-                    row_surface = fetched_surface
-                    row_scratch = fetched_scratch
-                    row_speckle = fetched_speckle
-                    row_gloss = fetched_gloss
-
-            used_surface_fallback = False
-            calc_surface = row_surface
-            if pd.isna(calc_surface):
-                calc_surface = 0.12
-                used_surface_fallback = True
-
-            corner_count_used = 2
-            if "corner_count_used" in row.index and not pd.isna(row.get("corner_count_used")):
-                corner_count_used = int(row.get("corner_count_used"))
-
-            new_grade = compute_grade(
-                float(row["horizontal_ratio"]),
-                float(row["vertical_ratio"]),
-                float(row["edge_score"]),
-                float(row["corner_score"]),
-                float(calc_surface),
-            )
-
-            confidence = compute_confidence(
-                h=float(row["horizontal_ratio"]),
-                v=float(row["vertical_ratio"]),
-                edge=float(row["edge_score"]),
-                corner=float(row["corner_score"]),
-                surface=float(calc_surface),
-                grade=float(new_grade),
-                stock_type=str(row.get("stock_type") or ""),
-                manual_centering_used=bool(row.get("manual_centering_used")),
-                used_surface_fallback=used_surface_fallback,
-                corner_count=corner_count_used,
-                glare_fraction=None,
-                valid_surface_fraction=None,
-                gloss_score=row_gloss,
-            )
-
-            submit = compute_submit_probability(
-                grade=new_grade,
-                confidence_score=confidence["confidence_score"],
-                surface=float(calc_surface),
-                band_spread=confidence["band_spread"],
-            )
-
-            current_grade_range = lookup_grade_range(new_grade, range_table)
-            new_card_id = str(uuid.uuid4())
-
-            new_data = {
-                "card_id": new_card_id,
-                "model_version": MODEL_VERSION,
-                "player_name": json_safe(row.get("player_name")),
-                "manufacturer": json_safe(row.get("manufacturer")),
-                "stock_type": json_safe(row.get("stock_type")),
-                "psa_is_graded": json_safe(row.get("psa_is_graded")),
-                "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
-                "horizontal_ratio": json_safe(row.get("horizontal_ratio")),
-                "vertical_ratio": json_safe(row.get("vertical_ratio")),
-                "edge_score": json_safe(row.get("edge_score")),
-                "corner_score": json_safe(row.get("corner_score")),
-                "surface_score": json_safe(row_surface),
-                "scratch_score": json_safe(row_scratch),
-                "speckle_score": json_safe(row_speckle),
-                "gloss_score": json_safe(row_gloss),
-                "calibrated_grade": json_safe(new_grade),
-                "confidence_score": json_safe(confidence["confidence_score"]),
-                "confidence_percent": json_safe(confidence["confidence_percent"]),
-                "confidence_label": json_safe(confidence["confidence_label"]),
-                "agreement_score": json_safe(confidence["agreement_score"]),
-                "threshold_score": json_safe(confidence["threshold_score"]),
-                "data_score": json_safe(confidence["data_score"]),
-                "band_spread": json_safe(confidence["band_spread"]),
-                "submit_probability": json_safe(submit["submit_probability"]),
-                "submit_percent": json_safe(submit["submit_percent"]),
-                "submit_label": json_safe(submit["submit_label"]),
-                "front_image_url": json_safe(row.get("front_image_url")),
-                "back_image_url": json_safe(row.get("back_image_url")),
-                "submitted_by": user_email,
-                "created_at": str(datetime.now()),
-                "manual_centering_used": json_safe(row.get("manual_centering_used")),
-                "front_left_measurement": json_safe(row.get("front_left_measurement")),
-                "front_right_measurement": json_safe(row.get("front_right_measurement")),
-                "front_top_measurement": json_safe(row.get("front_top_measurement")),
-                "front_bottom_measurement": json_safe(row.get("front_bottom_measurement")),
-                "front_horizontal_ratio_manual": json_safe(row.get("front_horizontal_ratio_manual")),
-                "front_vertical_ratio_manual": json_safe(row.get("front_vertical_ratio_manual")),
-                "corner_count_used": json_safe(corner_count_used),
-                "used_surface_fallback": json_safe(used_surface_fallback),
-                "analysis_success": True,
-                "analysis_notes": json_safe(
-                    build_analysis_notes(
-                        corner_count_used,
-                        used_surface_fallback,
-                        bool(row.get("manual_centering_used")),
-                    )
-                ),
-                "front_image_hash": json_safe(row.get("front_image_hash")),
-                "grade_range_low": json_safe(current_grade_range["range_low"]),
-                "grade_range_high": json_safe(current_grade_range["range_high"]),
-                "grade_band_sample_size": json_safe(current_grade_range["sample_size"]),
-                "grade_band_mae": json_safe(current_grade_range["mae"]),
-            }
-
             try:
+                img_resp = requests.get(front_url, timeout=60)
+                if img_resp.status_code != 200:
+                    status_box.warning(f"Image fetch failed for card_id {row.get('card_id')}")
+                    progress.progress(idx / max(total_rows, 1))
+                    continue
+
+                front_bytes = img_resp.content
+
+                ar = requests.post(
+                    f"{API_BASE}/analyze",
+                    files={"file": ("front.jpg", front_bytes, "image/jpeg")},
+                    timeout=60,
+                )
+                if ar.status_code != 200:
+                    status_box.warning(f"Analyze failed for card_id {row.get('card_id')}: {ar.text}")
+                    progress.progress(idx / max(total_rows, 1))
+                    continue
+
+                analyze_data = ar.json()
+                if "error" in analyze_data:
+                    status_box.warning(f"Analyze error for card_id {row.get('card_id')}: {analyze_data['error']}")
+                    progress.progress(idx / max(total_rows, 1))
+                    continue
+
+                h = float(analyze_data["horizontal_ratio"])
+                v = float(analyze_data["vertical_ratio"])
+                edge = float(analyze_data["edge_score"])
+
+                sr = requests.post(
+                    f"{API_BASE}/analyze_surface",
+                    files={"file": ("front.jpg", front_bytes, "image/jpeg")},
+                    timeout=60,
+                )
+
+                row_surface = None
+                row_scratch = None
+                row_speckle = None
+                row_gloss = None
+                used_surface_fallback = False
+
+                if sr.status_code == 200:
+                    surface_json = sr.json()
+                    if "error" not in surface_json:
+                        row_surface = surface_json.get("surface_score")
+                        row_scratch = surface_json.get("scratch_score")
+                        row_speckle = surface_json.get("speckle_score")
+                        row_gloss = surface_json.get("gloss_score")
+
+                if row_surface is None:
+                    row_surface = 0.12
+                    used_surface_fallback = True
+
+                corner = float(row.get("corner_score")) if not pd.isna(row.get("corner_score")) else 0.5
+
+                new_grade = compute_grade(h, v, edge, corner, float(row_surface))
+
+                confidence = compute_confidence(
+                    h=h,
+                    v=v,
+                    edge=edge,
+                    corner=corner,
+                    surface=float(row_surface),
+                    used_surface_fallback=used_surface_fallback,
+                    corner_count=2,
+                )
+
+                submit = compute_submit_probability(
+                    grade=new_grade,
+                    confidence_score=confidence["confidence_score"],
+                    surface=float(row_surface),
+                    band_spread=confidence["band_spread"],
+                )
+
+                current_grade_range = lookup_grade_range(new_grade, range_table)
+                new_card_id = str(uuid.uuid4())
+
+                new_data = {
+                    "card_id": new_card_id,
+                    "model_version": MODEL_VERSION,
+                    "player_name": json_safe(row.get("player_name")),
+                    "player_name_confidence": json_safe(row.get("player_name_confidence")),
+                    "player_name_source": json_safe(row.get("player_name_source")),
+                    "manufacturer": json_safe(row.get("manufacturer")),
+                    "stock_type": json_safe(row.get("stock_type")),
+                    "psa_is_graded": json_safe(row.get("psa_is_graded")),
+                    "psa_actual_grade": json_safe(row.get("psa_actual_grade")),
+                    "horizontal_ratio": json_safe(h),
+                    "vertical_ratio": json_safe(v),
+                    "edge_score": json_safe(edge),
+                    "corner_score": json_safe(corner),
+                    "surface_score": json_safe(row_surface),
+                    "scratch_score": json_safe(row_scratch),
+                    "speckle_score": json_safe(row_speckle),
+                    "gloss_score": json_safe(row_gloss),
+                    "calibrated_grade": json_safe(new_grade),
+                    "confidence_score": json_safe(confidence["confidence_score"]),
+                    "confidence_percent": json_safe(confidence["confidence_percent"]),
+                    "confidence_label": json_safe(confidence["confidence_label"]),
+                    "agreement_score": json_safe(confidence["agreement_score"]),
+                    "threshold_score": json_safe(confidence["threshold_score"]),
+                    "data_score": json_safe(confidence["data_score"]),
+                    "band_spread": json_safe(confidence["band_spread"]),
+                    "submit_probability": json_safe(submit["submit_probability"]),
+                    "submit_percent": json_safe(submit["submit_percent"]),
+                    "submit_label": json_safe(submit["submit_label"]),
+                    "front_image_url": json_safe(row.get("front_image_url")),
+                    "back_image_url": json_safe(row.get("back_image_url")),
+                    "submitted_by": json_safe(row.get("submitted_by")),
+                    "created_at": str(datetime.now()),
+                    "manual_centering_used": json_safe(row.get("manual_centering_used")),
+                    "front_left_measurement": json_safe(row.get("front_left_measurement")),
+                    "front_right_measurement": json_safe(row.get("front_right_measurement")),
+                    "front_top_measurement": json_safe(row.get("front_top_measurement")),
+                    "front_bottom_measurement": json_safe(row.get("front_bottom_measurement")),
+                    "front_horizontal_ratio_manual": json_safe(row.get("front_horizontal_ratio_manual")),
+                    "front_vertical_ratio_manual": json_safe(row.get("front_vertical_ratio_manual")),
+                    "used_surface_fallback": json_safe(used_surface_fallback),
+                    "grade_range_low": json_safe(current_grade_range["range_low"]),
+                    "grade_range_high": json_safe(current_grade_range["range_high"]),
+                    "grade_band_sample_size": json_safe(current_grade_range["sample_size"]),
+                    "grade_band_mae": json_safe(current_grade_range["mae"]),
+                    "front_image_hash": json_safe(row.get("front_image_hash")),
+                }
+
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
                 if post_resp.status_code not in [200, 201]:
                     status_box.warning(f"Post failed for source card_id {row.get('card_id')}: {post_resp.text}")
+
             except Exception as e:
-                status_box.warning(f"Post exception for source card_id {row.get('card_id')}: {e}")
+                status_box.warning(f"Reanalysis exception for source card_id {row.get('card_id')}: {e}")
 
             status_box.write(
                 f"Processed {idx}/{total_rows} | "
                 f"source_card_id={row.get('card_id')} | "
-                f"new_card_id={new_card_id} | "
-                f"grade={new_grade} | "
-                f"confidence={confidence['confidence_percent']:.1f}% | "
-                f"submit={submit['submit_percent']:.1f}% "
-                f"({submit['submit_label']})"
+                f"grade={locals().get('new_grade', 'n/a')} | "
+                f"confidence={locals().get('confidence', {}).get('confidence_percent', 'n/a')} | "
+                f"submit={locals().get('submit', {}).get('submit_label', 'n/a')}"
             )
             progress.progress(idx / max(total_rows, 1))
 
-        st.success("Re-scored and created new submissions.")
+        st.success("True reanalysis completed and saved as new submissions.")
