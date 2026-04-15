@@ -168,8 +168,15 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.6-grading-v10.6-ui-corner-storage"
+MODEL_VERSION = "v9.6-grading-v10.6-ui-corner-storage-v9.7-confidence-submit-surface-autocal"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
+DEFAULT_SURFACE_SCALE = 0.63
+AUTO_CAL_MIN_SAMPLES = 8
+AUTO_CAL_LOOKBACK = 200
+AUTO_CAL_MIN = 0.45
+AUTO_CAL_MAX = 0.80
+AUTO_CAL_STEP = 0.01
+
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -382,7 +389,7 @@ def render_overlay_image(
     left_x: float,
     right_x: float,
     top_y: float,
-    bottom_y: float
+    bottom_y: float,
 ) -> None:
     img_b64 = pil_to_base64(img)
     width, height = img.size
@@ -421,7 +428,7 @@ def build_card_preview_with_overlay(
     image_bytes: bytes,
     horizontal_ratio: float = None,
     vertical_ratio: float = None,
-    max_width: int = 320
+    max_width: int = 320,
 ):
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -454,38 +461,6 @@ def build_card_preview_with_overlay(
     bottom_y = int(h * bottom_prop)
 
     return preview, left_x, right_x, top_y, bottom_y
-
-
-def backfill_surface_from_url(front_image_url: str):
-    if not front_image_url:
-        return None, None, None, None
-
-    try:
-        img_resp = requests.get(front_image_url, timeout=60)
-        if img_resp.status_code != 200:
-            return None, None, None, None
-
-        sr = requests.post(
-            f"{API_BASE}/analyze_surface",
-            files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
-            timeout=60,
-        )
-
-        if sr.status_code != 200:
-            return None, None, None, None
-
-        surface_data = sr.json()
-        if "error" in surface_data:
-            return None, None, None, None
-
-        return (
-            surface_data.get("surface_score"),
-            surface_data.get("scratch_score"),
-            surface_data.get("speckle_score"),
-            surface_data.get("gloss_score"),
-        )
-    except Exception:
-        return None, None, None, None
 
 
 def detect_player_name(front_bytes: bytes) -> dict:
@@ -619,7 +594,7 @@ def upload_optional_image(image_bytes, filename):
     return f"{SUPABASE_URL}/storage/v1/object/public/card-images/{filename}"
 
 # ============================================================
-# HISTORICAL GRADE RANGE HELPERS
+# GRADE / RANGE HELPERS
 # ============================================================
 
 GRADE_BANDS = [
@@ -670,14 +645,16 @@ def build_grade_range_table(df: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     for band, g in work.groupby("predicted_grade_band", dropna=False):
-        rows.append({
-            "predicted_grade_band": band,
-            "sample_size": len(g),
-            "mae": round(float(g["abs_error"].mean()), 3),
-            "bias": round(float(g["error"].mean()), 3),
-            "range_low": round(float(g["psa_actual_grade"].quantile(0.10)), 2),
-            "range_high": round(float(g["psa_actual_grade"].quantile(0.90)), 2),
-        })
+        rows.append(
+            {
+                "predicted_grade_band": band,
+                "sample_size": len(g),
+                "mae": round(float(g["abs_error"].mean()), 3),
+                "bias": round(float(g["error"].mean()), 3),
+                "range_low": round(float(g["psa_actual_grade"].quantile(0.10)), 2),
+                "range_high": round(float(g["psa_actual_grade"].quantile(0.90)), 2),
+            }
+        )
 
     out = pd.DataFrame(rows)
     if out.empty:
@@ -723,7 +700,7 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# V9.6 GRADE MODEL
+# GRADE MODEL
 # ============================================================
 
 def compute_fitted_grade(
@@ -731,7 +708,7 @@ def compute_fitted_grade(
     vertical_ratio: float,
     corner_score: float,
     edge_score: float,
-    surface_score: float
+    surface_score: float,
 ) -> float:
     v_good = 1.0 - float(vertical_ratio)
     corner_bad = float(corner_score)
@@ -786,7 +763,101 @@ def compute_grade(h: float, v: float, edge: float, corner: float, surface: float
     return compute_fitted_grade(h, v, corner, edge, surface)
 
 # ============================================================
-# V9.6 CONFIDENCE
+# AUTO SURFACE CALIBRATION
+# ============================================================
+
+def compute_surface_scale_from_history(df: pd.DataFrame) -> dict:
+    base = {
+        "surface_scale": DEFAULT_SURFACE_SCALE,
+        "sample_size": 0,
+        "source": "default",
+        "weighted_mae": None,
+        "weighted_bias": None,
+    }
+
+    if df is None or df.empty:
+        return base
+
+    needed = [
+        "psa_actual_grade",
+        "horizontal_ratio",
+        "vertical_ratio",
+        "edge_score",
+        "corner_score",
+        "surface_score",
+    ]
+    if not all(c in df.columns for c in needed):
+        return base
+
+    work = df.dropna(subset=needed).copy()
+    if work.empty:
+        return base
+
+    if "created_at" in work.columns:
+        try:
+            work["created_at_sort"] = pd.to_datetime(work["created_at"], errors="coerce")
+            work = work.sort_values("created_at_sort", ascending=False)
+        except Exception:
+            pass
+
+    work = work.head(AUTO_CAL_LOOKBACK).copy()
+    if len(work) < AUTO_CAL_MIN_SAMPLES:
+        base["sample_size"] = int(len(work))
+        return base
+
+    corner_counts = pd.to_numeric(work.get("corner_count_used"), errors="coerce").fillna(0)
+    used_surface_fallback = work.get("used_surface_fallback")
+    if used_surface_fallback is None:
+        used_surface_fallback = pd.Series([False] * len(work), index=work.index)
+    fallback_mask = used_surface_fallback.astype(str).str.lower().isin(["true", "1", "yes"])
+
+    weights = np.ones(len(work), dtype=float)
+    weights += (corner_counts >= 2).astype(float) * 0.50
+    weights += (~fallback_mask).astype(float) * 0.25
+
+    psa = work["psa_actual_grade"].astype(float).to_numpy()
+    h = work["horizontal_ratio"].astype(float).to_numpy()
+    v = work["vertical_ratio"].astype(float).to_numpy()
+    edge = work["edge_score"].astype(float).to_numpy()
+    corner = work["corner_score"].astype(float).to_numpy()
+    surface = work["surface_score"].astype(float).to_numpy()
+
+    best = None
+    for scale in np.arange(AUTO_CAL_MIN, AUTO_CAL_MAX + AUTO_CAL_STEP / 2, AUTO_CAL_STEP):
+        scaled_surface = np.clip(surface * scale, 0.0, 1.0)
+        preds = np.array([
+            compute_grade(hh, vv, ee, cc, ss)
+            for hh, vv, ee, cc, ss in zip(h, v, edge, corner, scaled_surface)
+        ])
+        err = preds - psa
+        weighted_mae = float(np.average(np.abs(err), weights=weights))
+        weighted_bias = float(np.average(err, weights=weights))
+        objective = weighted_mae + 0.15 * abs(weighted_bias)
+        candidate = {
+            "surface_scale": round(float(scale), 3),
+            "sample_size": int(len(work)),
+            "source": "auto_calibrated",
+            "weighted_mae": round(weighted_mae, 3),
+            "weighted_bias": round(weighted_bias, 3),
+            "objective": round(objective, 4),
+        }
+        if best is None or candidate["objective"] < best["objective"]:
+            best = candidate
+
+    return best if best is not None else base
+
+
+def apply_surface_scale(surface_score: float, scale_info: dict) -> float:
+    scale = DEFAULT_SURFACE_SCALE
+    if isinstance(scale_info, dict):
+        try:
+            scale = float(scale_info.get("surface_scale", DEFAULT_SURFACE_SCALE))
+        except Exception:
+            scale = DEFAULT_SURFACE_SCALE
+    return float(np.clip(float(surface_score) * scale, 0.0, 1.0))
+
+# ============================================================
+# CONFIDENCE LAYER (V9.7 RECALIBRATED)
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -820,7 +891,7 @@ def compute_confidence(
     corner: float,
     surface: float,
     used_surface_fallback: bool = False,
-    corner_count: int = 0
+    corner_count: int = 0,
 ) -> dict:
     centering_band = centering_psa_grade(h, v)
     corner_band = corner_grade_band(corner)
@@ -830,48 +901,49 @@ def compute_confidence(
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 4.0))
+    agreement_score = max(0.0, 1.0 - (spread / 5.5))
 
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
     d_surface = band_distance_surface(surface)
 
-    center_conf = min(1.0, d_center / 0.05)
-    corner_conf = min(1.0, d_corner / 0.08)
-    edge_conf = min(1.0, d_edge / 0.01)
-    surface_conf = min(1.0, d_surface / 0.03)
+    center_conf = min(1.0, d_center / 0.075)
+    corner_conf = min(1.0, d_corner / 0.12)
+    edge_conf = min(1.0, d_edge / 0.018)
+    surface_conf = min(1.0, d_surface / 0.05)
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
     data_score = 1.0
     if used_surface_fallback:
-        data_score -= 0.20
+        data_score -= 0.12
     if corner_count < 2:
-        data_score -= 0.25
+        data_score -= 0.20
     elif corner_count == 2:
-        data_score -= 0.05
+        data_score -= 0.03
 
     data_score = max(0.0, min(1.0, data_score))
 
     confidence_raw = (
-        0.45 * agreement_score +
-        0.40 * threshold_score +
-        0.15 * data_score
+        0.50 * agreement_score +
+        0.30 * threshold_score +
+        0.20 * data_score
     )
 
     confidence_raw = max(0.0, min(1.0, confidence_raw))
+    confidence_percent = round(confidence_raw * 100.0, 1)
 
-    if confidence_raw >= 0.80:
+    if confidence_percent >= 75:
         label = "High"
-    elif confidence_raw >= 0.60:
+    elif confidence_percent >= 55:
         label = "Moderate"
     else:
         label = "Low"
 
     return {
         "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": round(confidence_raw * 100, 1),
+        "confidence_percent": confidence_percent,
         "confidence_label": label,
         "agreement_score": round(agreement_score, 3),
         "threshold_score": round(threshold_score, 3),
@@ -884,26 +956,26 @@ def compute_confidence(
     }
 
 # ============================================================
-# V9.6 SUBMIT RULES
+# SUBMIT RULES (V9.7 RECALIBRATED)
 # ============================================================
 
 def compute_submit_probability(
     grade: float,
     confidence_score: float,
     surface: float,
-    band_spread: float
+    band_spread: float,
 ) -> dict:
     confidence_percent = confidence_score * 100.0
 
-    if grade >= 9.3 and confidence_percent >= 85.0:
+    if grade >= 9.4:
         label = "Strong Submit"
         probability = 0.95
-    elif grade >= 9.3 and confidence_percent < 85.0:
+    elif grade >= 9.0:
         label = "Submit"
-        probability = 0.80
-    elif 8.4 < grade < 9.3 and confidence_percent > 80.0:
+        probability = 0.82
+    elif 8.6 <= grade < 9.0 and confidence_percent >= 58.0:
         label = "Risky"
-        probability = 0.55
+        probability = 0.58
     else:
         label = "Do Not Submit"
         probability = 0.15
@@ -927,7 +999,7 @@ def decision_panel_admin(
     surface: float,
     confidence: dict,
     submit: dict,
-    grade_range: dict
+    grade_range: dict,
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
@@ -949,9 +1021,9 @@ def decision_panel_admin(
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.80 else
-        "Moderate" if confidence["confidence_score"] >= 0.60 else
-        "High"
+        "Low" if confidence["confidence_score"] >= 0.75 else
+        "Moderate" if confidence["confidence_score"] >= 0.55 else
+        "High",
     )
     st.write("Limiting Feature:", caps["limiter"])
 
@@ -995,7 +1067,7 @@ def decision_panel_user(
     surface: float,
     confidence: dict,
     submit: dict,
-    grade_range: dict
+    grade_range: dict,
 ) -> None:
     if submit["submit_label"] == "Strong Submit":
         st.success("STRONG SUBMIT")
@@ -1041,9 +1113,9 @@ user_email = st.text_input("Enter Access Email")
 st.markdown("""
 <div class="guide-box">
     <div class="guide-title">USER GUIDE BEST PRACTICES:</div>
-    <div>• All pictures taken from same height/zoom with similar lighting</div>
-    <div>• Take pictures of all 4 front corners</div>
-    <div>• Use manual centering</div>
+    <div>â¢ All pictures taken from same height/zoom with similar lighting</div>
+    <div>â¢ Take pictures of all 4 front corners</div>
+    <div>â¢ Use manual centering</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1067,20 +1139,35 @@ else:
     st.stop()
 
 # ============================================================
-# LOAD DATA FOR RANGE + ADMIN
+# LOAD DATA FOR RANGE + ADMIN + AUTO CAL
 # ============================================================
 
 all_submissions_df = pd.DataFrame()
 range_table = pd.DataFrame()
+surface_scale_info = {
+    "surface_scale": DEFAULT_SURFACE_SCALE,
+    "sample_size": 0,
+    "source": "default",
+    "weighted_mae": None,
+    "weighted_bias": None,
+}
 
 try:
     range_resp = requests.get(TABLE_URL, headers=headers, timeout=30)
     if range_resp.status_code == 200:
         all_submissions_df = pd.DataFrame(range_resp.json())
         range_table = build_grade_range_table(all_submissions_df)
+        surface_scale_info = compute_surface_scale_from_history(all_submissions_df)
 except Exception:
     all_submissions_df = pd.DataFrame()
     range_table = pd.DataFrame()
+
+st.markdown(
+    f"<div class='info-box'><strong>Surface Calibration:</strong> "
+    f"scale {surface_scale_info['surface_scale']:.2f} "
+    f"({surface_scale_info['source']}; samples={surface_scale_info['sample_size']})</div>",
+    unsafe_allow_html=True,
+)
 
 # ============================================================
 # USER DATA DOWNLOAD
@@ -1128,7 +1215,7 @@ st.markdown("## Card Images")
 
 clear_col, _ = st.columns([1, 3])
 with clear_col:
-    if st.button("🧹 Clear All Images"):
+    if st.button("ð§¹ Clear All Images"):
         st.session_state.upload_key = str(uuid.uuid4())
         st.session_state.slot_versions = {}
         reset_analysis_state()
@@ -1198,7 +1285,7 @@ if use_manual_centering:
 
         st.markdown(
             '<div class="manual-center-image-note">Image rotated 90 degrees clockwise for manual centering. Use the sliders below to line up the card edges.</div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
         st.markdown('<div class="manual-center-wrap">', unsafe_allow_html=True)
@@ -1303,11 +1390,11 @@ if st.button("Run Analysis"):
     corner_scores = []
     corner_bytes_map = {}
 
-    for _, c in corner_inputs.items():
+    for slot_name, c in corner_inputs.items():
         if c is None:
             continue
         c_bytes = c.getvalue()
-        corner_bytes_map[_] = c_bytes
+        corner_bytes_map[slot_name] = c_bytes
         try:
             cr = requests.post(
                 f"{API_BASE}/analyze_corner",
@@ -1340,6 +1427,7 @@ if st.button("Run Analysis"):
     else:
         corner = min(corner_scores)
 
+    surface_raw = None
     surface = None
     scratch_score = None
     speckle_score = None
@@ -1366,17 +1454,19 @@ if st.button("Run Analysis"):
         if "error" in surface_data:
             st.warning(f"Surface API error: {surface_data['error']}")
         else:
-            surface = surface_data.get("surface_score")
+            surface_raw = surface_data.get("surface_score")
             scratch_score = surface_data.get("scratch_score")
             speckle_score = surface_data.get("speckle_score")
             gloss_score = surface_data.get("gloss_score")
     elif sr is not None:
         st.warning(f"Surface API failed: {sr.text}")
 
-    if surface is None:
-        surface = 0.12
+    if surface_raw is None:
+        surface_raw = 0.12
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
+
+    surface = apply_surface_scale(surface_raw, surface_scale_info)
 
     player_meta = detect_player_name(front_bytes)
     detected_player_name = player_meta.get("player_name")
@@ -1413,7 +1503,7 @@ if st.button("Run Analysis"):
         image_bytes=front_bytes,
         horizontal_ratio=h,
         vertical_ratio=v,
-        max_width=320
+        max_width=320,
     )
 
     st.session_state.analysis_payload = {
@@ -1434,6 +1524,8 @@ if st.button("Run Analysis"):
         "edge_score": edge,
         "corner_score": corner,
         "surface_score": float(surface),
+        "surface_score_raw": float(surface_raw),
+        "surface_scale_used": float(surface_scale_info["surface_scale"]),
         "scratch_score": scratch_score,
         "speckle_score": speckle_score,
         "gloss_score": gloss_score,
@@ -1510,7 +1602,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.markdown("### Card Preview")
         st.markdown('<div class="preview-card">', unsafe_allow_html=True)
         render_overlay_image(preview_img, left_x, right_x, top_y, bottom_y)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("## Grade")
     st.markdown(f"### {result['grade']}")
@@ -1543,10 +1635,10 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     st.markdown("## About to Save")
     s1, s2, s3 = st.columns(3)
     with s1:
-        st.write("Player Name:", final_player_name or "—")
-        st.write("Manufacturer:", result["manufacturer"] or "—")
+        st.write("Player Name:", final_player_name or "â")
+        st.write("Manufacturer:", result["manufacturer"] or "â")
     with s2:
-        st.write("Stock Type:", result["stock_type"] or "—")
+        st.write("Stock Type:", result["stock_type"] or "â")
         st.write("Grade:", result["grade"])
     with s3:
         st.write("Confidence:", f"{result['confidence']['confidence_percent']:.1f}%")
@@ -1561,7 +1653,9 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Corner Score:", round(result["corner_score"], 4))
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
-        st.write("Surface Score:", round(float(result["surface_score"]), 4))
+        st.write("Surface Score Raw:", round(float(result["surface_score_raw"]), 4))
+        st.write("Surface Scale Used:", round(float(result["surface_scale_used"]), 3))
+        st.write("Surface Score Final:", round(float(result["surface_score"]), 4))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Front Source:", result["front_source_mode"])
@@ -1672,6 +1766,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
                 st.write("DEBUG grade range:", result["grade_range"])
+                st.write("DEBUG surface raw/final:", result["surface_score_raw"], result["surface_score"])
+                st.write("DEBUG surface scale info:", surface_scale_info)
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -1698,6 +1794,15 @@ if user_role == "admin":
 
     st.write("Total:", len(df))
     df = add_grade_band_columns(df)
+
+    st.markdown("### Surface Auto Calibration")
+    st.write("Current Surface Scale:", surface_scale_info["surface_scale"])
+    st.write("Calibration Source:", surface_scale_info["source"])
+    st.write("Calibration Samples:", surface_scale_info["sample_size"])
+    if surface_scale_info.get("weighted_mae") is not None:
+        st.write("Weighted MAE at Current Scale:", surface_scale_info["weighted_mae"])
+    if surface_scale_info.get("weighted_bias") is not None:
+        st.write("Weighted Bias at Current Scale:", surface_scale_info["weighted_bias"])
 
     if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
         dfv = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
@@ -1873,11 +1978,13 @@ if user_role == "admin":
     st.markdown("### Biggest PSA Misses")
     if "abs_error" in filtered_df.columns:
         worst = filtered_df.sort_values("abs_error", ascending=False).head(15)
-        worst_cols = [c for c in [
-            "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
-            "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
-        ] if c in worst.columns]
+        worst_cols = [
+            c for c in [
+                "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
+                "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
+                "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id",
+            ] if c in worst.columns
+        ]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
     st.markdown("### Manual Centering Comparison")
@@ -1908,6 +2015,8 @@ if user_role == "admin":
     <div class="info-box">
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
+    reapplies saved manual centering ratios when the original submission used manual centering,
+    applies the current auto-calibrated surface scale,
     then applies the current grading, confidence, and submit logic.
     </div>
     """, unsafe_allow_html=True)
@@ -1964,12 +2073,20 @@ if user_role == "admin":
                 v = float(analyze_data["vertical_ratio"])
                 edge = float(analyze_data["edge_score"])
 
+                manual_centering_used = bool(row.get("manual_centering_used")) if not pd.isna(row.get("manual_centering_used")) else False
+                manual_h = row.get("front_horizontal_ratio_manual")
+                manual_v = row.get("front_vertical_ratio_manual")
+                if manual_centering_used and pd.notna(manual_h) and pd.notna(manual_v):
+                    h = float(manual_h)
+                    v = float(manual_v)
+
                 surface_resp = requests.post(
                     f"{API_BASE}/analyze_surface",
                     files={"file": ("front.jpg", front_bytes, "image/jpeg")},
                     timeout=60,
                 )
 
+                row_surface_raw = None
                 row_surface = None
                 row_scratch = None
                 row_speckle = None
@@ -1979,14 +2096,16 @@ if user_role == "admin":
                 if surface_resp.status_code == 200:
                     surface_json = surface_resp.json()
                     if "error" not in surface_json:
-                        row_surface = surface_json.get("surface_score")
+                        row_surface_raw = surface_json.get("surface_score")
                         row_scratch = surface_json.get("scratch_score")
                         row_speckle = surface_json.get("speckle_score")
                         row_gloss = surface_json.get("gloss_score")
 
-                if row_surface is None:
-                    row_surface = 0.12
+                if row_surface_raw is None:
+                    row_surface_raw = 0.12
                     used_surface_fallback = True
+
+                row_surface = apply_surface_scale(row_surface_raw, surface_scale_info)
 
                 corner_urls = [
                     row.get("corner1_image_url"),
@@ -2124,4 +2243,4 @@ if user_role == "admin":
             )
             progress.progress(idx / max(total_rows, 1))
 
-        st.success(f"True reanalysis completed. Saved {success_count} row(s), failed {fail_count}.")
+        st.success(f"True reanalys
