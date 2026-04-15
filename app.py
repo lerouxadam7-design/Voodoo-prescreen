@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-surface-calibrated-manual-rescore"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-surface-calibrated-band-calibrated"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 DEFAULT_SURFACE_SCALE = 0.63
 MIN_SURFACE_CALIBRATION_ROWS = 10
@@ -462,38 +462,6 @@ def build_card_preview_with_overlay(
     bottom_y = int(h * bottom_prop)
 
     return preview, left_x, right_x, top_y, bottom_y
-
-
-def backfill_surface_from_url(front_image_url: str):
-    if not front_image_url:
-        return None, None, None, None
-
-    try:
-        img_resp = requests.get(front_image_url, timeout=60)
-        if img_resp.status_code != 200:
-            return None, None, None, None
-
-        sr = requests.post(
-            f"{API_BASE}/analyze_surface",
-            files={"file": ("front.jpg", img_resp.content, "image/jpeg")},
-            timeout=60,
-        )
-
-        if sr.status_code != 200:
-            return None, None, None, None
-
-        surface_data = sr.json()
-        if "error" in surface_data:
-            return None, None, None, None
-
-        return (
-            surface_data.get("surface_score"),
-            surface_data.get("scratch_score"),
-            surface_data.get("speckle_score"),
-            surface_data.get("gloss_score"),
-        )
-    except Exception:
-        return None, None, None, None
 
 
 def detect_player_name(front_bytes: bytes) -> dict:
@@ -817,13 +785,33 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
+def apply_grade_band_calibration(raw_grade: float) -> float:
+    g = float(raw_grade)
+
+    if g < 8.0:
+        g -= 0.20
+    elif g < 8.5:
+        g += 0.34
+    elif g < 9.0:
+        g += 0.58
+    elif g < 9.5:
+        g -= 0.03
+    elif g < 9.7:
+        g += 0.00
+    else:
+        g += 0.00
+
+    return round(max(1.0, min(10.0, g)), 2)
+
+
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    overall = compute_fitted_grade(h, v, corner, edge, surface)
+    raw_overall = compute_fitted_grade(h, v, corner, edge, surface)
+    overall = apply_grade_band_calibration(raw_overall)
 
     cap_values = {
         "Centering": centering_cap,
@@ -836,6 +824,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": overall,
         "candidate_grade": overall,
+        "raw_candidate_grade": raw_overall,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -850,7 +839,8 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    return compute_fitted_grade(h, v, corner, edge, surface)
+    raw_grade = compute_fitted_grade(h, v, corner, edge, surface)
+    return apply_grade_band_calibration(raw_grade)
 
 # ============================================================
 # CONFIDENCE LAYER (V9.7)
@@ -1045,6 +1035,14 @@ def decision_panel_admin(
     st.write("Threshold Score:", confidence["threshold_score"])
     st.write("Data Quality Score:", confidence["data_score"])
     st.write("Band Spread:", confidence["band_spread"])
+
+    st.markdown("### Fitted Formula Output")
+    st.write("Raw Formula Grade:", caps["raw_candidate_grade"])
+    st.write("Calibrated Grade:", caps["candidate_grade"])
+    st.write("Centering Band:", caps["centering_cap"])
+    st.write("Corner Band:", caps["corner_cap"])
+    st.write("Edge Band:", caps["edge_cap"])
+    st.write("Surface Band:", caps["surface_cap"])
 
 
 def decision_panel_user(
@@ -1450,7 +1448,8 @@ if st.button("Run Analysis"):
     else:
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
-    grade = compute_grade(h, v, edge, corner, float(surface))
+    raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
+    grade = apply_grade_band_calibration(raw_grade)
 
     confidence = compute_confidence(
         h=h,
@@ -1502,6 +1501,7 @@ if st.button("Run Analysis"):
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
         "grade": grade,
+        "raw_grade": raw_grade,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
@@ -1625,6 +1625,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
+        st.write("Raw Formula Grade:", round(float(result["raw_grade"]), 2))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Front Source:", result["front_source_mode"])
@@ -1694,6 +1695,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "speckle_score": json_safe(result["speckle_score"]),
             "gloss_score": json_safe(result["gloss_score"]),
             "calibrated_grade": json_safe(result["grade"]),
+            "raw_formula_grade": json_safe(result["raw_grade"]),
             "confidence_score": json_safe(result["confidence"]["confidence_score"]),
             "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
             "confidence_label": json_safe(result["confidence"]["confidence_label"]),
@@ -1730,17 +1732,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "surface_scale_source": json_safe(result["surface_scale_source"]),
             "surface_scale_rows": json_safe(result["surface_scale_rows"]),
         }
-
-        if user_role == "admin":
-            with st.expander("Debug"):
-                st.write("DEBUG surface response:", result["surface_data"] if result["surface_data"] is not None else "no surface_data")
-                st.write("DEBUG payload player_name:", payload["player_name"])
-                st.write("DEBUG payload confidence_percent:", payload["confidence_percent"])
-                st.write("DEBUG payload submit_percent:", payload["submit_percent"])
-                st.write("DEBUG payload submit_label:", payload["submit_label"])
-                st.write("DEBUG payload grade:", payload["calibrated_grade"])
-                st.write("DEBUG front_image_hash:", payload["front_image_hash"])
-                st.write("DEBUG grade range:", result["grade_range"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -2116,7 +2107,8 @@ if user_role == "admin":
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
 
-                new_grade = compute_grade(h, v, edge, corner, float(row_surface))
+                raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
+                new_grade = apply_grade_band_calibration(raw_grade)
 
                 confidence = compute_confidence(
                     h=h,
@@ -2156,6 +2148,7 @@ if user_role == "admin":
                     "scratch_score": json_safe(row_scratch),
                     "speckle_score": json_safe(row_speckle),
                     "gloss_score": json_safe(row_gloss),
+                    "raw_formula_grade": json_safe(raw_grade),
                     "calibrated_grade": json_safe(new_grade),
                     "confidence_score": json_safe(confidence["confidence_score"]),
                     "confidence_percent": json_safe(confidence["confidence_percent"]),
