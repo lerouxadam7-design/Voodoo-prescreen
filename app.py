@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-tuned-inputs"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -697,28 +697,6 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# TUNED INPUT ADJUSTMENTS
-# ============================================================
-
-def clip01(value: float) -> float:
-    return float(max(0.0, min(1.0, float(value))))
-
-
-def adjust_inputs_for_grading(
-    horizontal_ratio: float,
-    vertical_ratio: float,
-    corner_score: float,
-    edge_score: float,
-    surface_score: float
-):
-    h_adj = clip01(horizontal_ratio)
-    v_adj = clip01(vertical_ratio * 0.97)
-    corner_adj = clip01(corner_score * 1.08 + 0.08)
-    edge_adj = clip01(edge_score)
-    surface_adj = clip01(surface_score * 0.68 + 0.025)
-    return h_adj, v_adj, corner_adj, edge_adj, surface_adj
-
-# ============================================================
 # GRADE MODEL
 # ============================================================
 
@@ -747,16 +725,12 @@ def compute_fitted_grade(
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
-    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
-        h, v, corner, edge, surface
-    )
+    centering_cap = centering_psa_grade(h, v)
+    corner_cap = corner_grade_band(corner)
+    edge_cap = edge_grade_band(edge)
+    surface_cap = surface_grade_band(surface)
 
-    centering_cap = centering_psa_grade(h_adj, v_adj)
-    corner_cap = corner_grade_band(corner_adj)
-    edge_cap = edge_grade_band(edge_adj)
-    surface_cap = surface_grade_band(surface_adj)
-
-    overall = compute_fitted_grade(h_adj, v_adj, corner_adj, edge_adj, surface_adj)
+    overall = compute_fitted_grade(h, v, corner, edge, surface)
 
     cap_values = {
         "Centering": centering_cap,
@@ -770,11 +744,6 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         "overall_grade": overall,
         "candidate_grade": overall,
         "raw_candidate_grade": overall,
-        "adjusted_horizontal_ratio": round(h_adj, 4),
-        "adjusted_vertical_ratio": round(v_adj, 4),
-        "adjusted_corner_score": round(corner_adj, 4),
-        "adjusted_edge_score": round(edge_adj, 4),
-        "adjusted_surface_score": round(surface_adj, 4),
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -789,10 +758,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
-        h, v, corner, edge, surface
-    )
-    return compute_fitted_grade(h_adj, v_adj, corner_adj, edge_adj, surface_adj)
+    return compute_fitted_grade(h, v, corner, edge, surface)
 
 # ============================================================
 # CONFIDENCE LAYER (V9.7)
@@ -831,24 +797,20 @@ def compute_confidence(
     used_surface_fallback: bool = False,
     corner_count: int = 0
 ) -> dict:
-    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
-        h, v, corner, edge, surface
-    )
-
-    centering_band = centering_psa_grade(h_adj, v_adj)
-    corner_band = corner_grade_band(corner_adj)
-    edge_band = edge_grade_band(edge_adj)
-    surface_band = surface_grade_band(surface_adj)
+    centering_band = centering_psa_grade(h, v)
+    corner_band = corner_grade_band(corner)
+    edge_band = edge_grade_band(edge)
+    surface_band = surface_grade_band(surface)
 
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
     agreement_score = max(0.0, 1.0 - (spread / 5.5))
 
-    d_center = band_distance_centering(h_adj, v_adj)
-    d_corner = band_distance_corner(corner_adj)
-    d_edge = band_distance_edge(edge_adj)
-    d_surface = band_distance_surface(surface_adj)
+    d_center = band_distance_centering(h, v)
+    d_corner = band_distance_corner(corner)
+    d_edge = band_distance_edge(edge)
+    d_surface = band_distance_surface(surface)
 
     center_conf = min(1.0, d_center / 0.075)
     corner_conf = min(1.0, d_corner / 0.12)
@@ -977,14 +939,14 @@ def decision_panel_admin(
         st.write("Historical Sample Size:", grade_range["sample_size"])
 
     st.markdown("### Centering")
-    st.write("Horizontal Centering:", ratio_to_psa_centering(caps["adjusted_horizontal_ratio"]))
-    st.write("Vertical Centering:", ratio_to_psa_centering(caps["adjusted_vertical_ratio"]))
-    st.write("Centering Grade:", centering_psa_grade(caps["adjusted_horizontal_ratio"], caps["adjusted_vertical_ratio"]))
+    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
+    st.write("Vertical Centering:", ratio_to_psa_centering(v))
+    st.write("Centering Grade:", centering_psa_grade(h, v))
 
     st.markdown("### Subgrades (Out of 10)")
-    st.write("Corners:", corner_subgrade(caps["adjusted_corner_score"]))
-    st.write("Edges:", edge_subgrade(caps["adjusted_edge_score"]))
-    st.write("Surface:", surface_subgrade(caps["adjusted_surface_score"]))
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
 
     st.markdown("### Confidence Breakdown")
     st.write("Agreement Score:", confidence["agreement_score"])
@@ -994,9 +956,6 @@ def decision_panel_admin(
 
     st.markdown("### Fitted Formula Output")
     st.write("Raw Formula Grade:", caps["raw_candidate_grade"])
-    st.write("Adjusted Vertical Ratio:", caps["adjusted_vertical_ratio"])
-    st.write("Adjusted Corner Score:", caps["adjusted_corner_score"])
-    st.write("Adjusted Surface Score:", caps["adjusted_surface_score"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -1014,8 +973,6 @@ def decision_panel_user(
     submit: dict,
     grade_range: dict
 ) -> None:
-    caps = compute_psa_caps(h, v, edge, corner, surface)
-
     if submit["submit_label"] == "Strong Submit":
         st.success("STRONG SUBMIT")
     elif submit["submit_label"] == "Submit":
@@ -1042,13 +999,13 @@ def decision_panel_user(
     """, unsafe_allow_html=True)
 
     st.markdown("### Centering")
-    st.write("Horizontal:", ratio_to_psa_centering(caps["adjusted_horizontal_ratio"]))
-    st.write("Vertical:", ratio_to_psa_centering(caps["adjusted_vertical_ratio"]))
+    st.write("Horizontal:", ratio_to_psa_centering(h))
+    st.write("Vertical:", ratio_to_psa_centering(v))
 
     st.markdown("### Subgrades")
-    st.write("Corners:", corner_subgrade(caps["adjusted_corner_score"]))
-    st.write("Edges:", edge_subgrade(caps["adjusted_edge_score"]))
-    st.write("Surface:", surface_subgrade(caps["adjusted_surface_score"]))
+    st.write("Corners:", corner_subgrade(corner))
+    st.write("Edges:", edge_subgrade(edge))
+    st.write("Surface:", surface_subgrade(surface))
 
 # ============================================================
 # ACCESS + GUIDE
@@ -1402,7 +1359,8 @@ if st.button("Run Analysis"):
     else:
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
-    grade = compute_grade(h, v, edge, corner, float(surface))
+    raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
+    grade = raw_grade
 
     confidence = compute_confidence(
         h=h,
@@ -1430,10 +1388,6 @@ if st.button("Run Analysis"):
         max_width=320
     )
 
-    adjusted_h, adjusted_v, adjusted_corner, adjusted_edge, adjusted_surface = adjust_inputs_for_grading(
-        h, v, corner, edge, float(surface)
-    )
-
     st.session_state.analysis_payload = {
         "user_entered_player_name": user_entered_player_name,
         "manufacturer": manufacturer,
@@ -1452,17 +1406,13 @@ if st.button("Run Analysis"):
         "edge_score": edge,
         "corner_score": corner,
         "surface_score": float(surface),
-        "adjusted_horizontal_ratio": adjusted_h,
-        "adjusted_vertical_ratio": adjusted_v,
-        "adjusted_edge_score": adjusted_edge,
-        "adjusted_corner_score": adjusted_corner,
-        "adjusted_surface_score": adjusted_surface,
         "scratch_score": scratch_score,
         "speckle_score": speckle_score,
         "gloss_score": gloss_score,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
         "grade": grade,
+        "raw_grade": raw_grade,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
@@ -1577,14 +1527,13 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.markdown("### Raw Feature Values")
         st.write("Horizontal Ratio:", round(result["horizontal_ratio"], 4))
         st.write("Vertical Ratio:", round(result["vertical_ratio"], 4))
+        st.write("Horizontal Centering:", ratio_to_psa_centering(result["horizontal_ratio"]))
+        st.write("Vertical Centering:", ratio_to_psa_centering(result["vertical_ratio"]))
         st.write("Corner Score:", round(result["corner_score"], 4))
+        st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
-        st.write("Adjusted Horizontal Ratio:", round(result["adjusted_horizontal_ratio"], 4))
-        st.write("Adjusted Vertical Ratio:", round(result["adjusted_vertical_ratio"], 4))
-        st.write("Adjusted Corner Score:", round(result["adjusted_corner_score"], 4))
-        st.write("Adjusted Edge Score:", round(result["adjusted_edge_score"], 4))
-        st.write("Adjusted Surface Score:", round(float(result["adjusted_surface_score"]), 4))
+        st.write("Raw Formula Grade:", round(float(result["raw_grade"]), 2))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Front Source:", result["front_source_mode"])
@@ -1647,15 +1596,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "edge_score": json_safe(result["edge_score"]),
             "corner_score": json_safe(result["corner_score"]),
             "surface_score": json_safe(result["surface_score"]),
-            "adjusted_horizontal_ratio": json_safe(result["adjusted_horizontal_ratio"]),
-            "adjusted_vertical_ratio": json_safe(result["adjusted_vertical_ratio"]),
-            "adjusted_edge_score": json_safe(result["adjusted_edge_score"]),
-            "adjusted_corner_score": json_safe(result["adjusted_corner_score"]),
-            "adjusted_surface_score": json_safe(result["adjusted_surface_score"]),
             "scratch_score": json_safe(result["scratch_score"]),
             "speckle_score": json_safe(result["speckle_score"]),
             "gloss_score": json_safe(result["gloss_score"]),
             "calibrated_grade": json_safe(result["grade"]),
+            "raw_formula_grade": json_safe(result["raw_grade"]),
             "confidence_score": json_safe(result["confidence"]["confidence_score"]),
             "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
             "confidence_label": json_safe(result["confidence"]["confidence_label"]),
@@ -2057,7 +2002,8 @@ if user_role == "admin":
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
 
-                new_grade = compute_grade(h, v, edge, corner, float(row_surface))
+                raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
+                new_grade = raw_grade
 
                 confidence = compute_confidence(
                     h=h,
@@ -2079,10 +2025,6 @@ if user_role == "admin":
                 current_grade_range = lookup_grade_range(new_grade, range_table)
                 new_card_id = str(uuid.uuid4())
 
-                adjusted_h, adjusted_v, adjusted_corner, adjusted_edge, adjusted_surface = adjust_inputs_for_grading(
-                    h, v, corner, edge, float(row_surface)
-                )
-
                 new_data = {
                     "card_id": new_card_id,
                     "model_version": MODEL_VERSION,
@@ -2098,14 +2040,10 @@ if user_role == "admin":
                     "edge_score": json_safe(edge),
                     "corner_score": json_safe(corner),
                     "surface_score": json_safe(row_surface),
-                    "adjusted_horizontal_ratio": json_safe(adjusted_h),
-                    "adjusted_vertical_ratio": json_safe(adjusted_v),
-                    "adjusted_edge_score": json_safe(adjusted_edge),
-                    "adjusted_corner_score": json_safe(adjusted_corner),
-                    "adjusted_surface_score": json_safe(adjusted_surface),
                     "scratch_score": json_safe(row_scratch),
                     "speckle_score": json_safe(row_speckle),
                     "gloss_score": json_safe(row_gloss),
+                    "raw_formula_grade": json_safe(raw_grade),
                     "calibrated_grade": json_safe(new_grade),
                     "confidence_score": json_safe(confidence["confidence_score"]),
                     "confidence_percent": json_safe(confidence["confidence_percent"]),
