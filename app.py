@@ -160,10 +160,8 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-tuned-inputs"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
-DEFAULT_SURFACE_SCALE = 0.63
-MIN_SURFACE_CALIBRATION_ROWS = 10
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -699,63 +697,26 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# SURFACE CALIBRATION
+# TUNED INPUT ADJUSTMENTS
 # ============================================================
 
-def apply_surface_scale(surface: float, scale: float) -> float:
-    s = max(0.0, min(1.0, float(surface)))
-    out = s * float(scale)
-    return float(max(0.0, min(1.0, out)))
+def clip01(value: float) -> float:
+    return float(max(0.0, min(1.0, float(value))))
 
 
-def simulate_grade_for_scale(row: pd.Series, scale: float):
-    needed = ["horizontal_ratio", "vertical_ratio", "corner_score", "edge_score", "surface_score", "psa_actual_grade"]
-    if not all(c in row.index for c in needed):
-        return None
-
-    try:
-        if any(pd.isna(row[c]) for c in needed):
-            return None
-        scaled_surface = apply_surface_scale(float(row["surface_score"]), float(scale))
-        pred = compute_grade(
-            float(row["horizontal_ratio"]),
-            float(row["vertical_ratio"]),
-            float(row["edge_score"]),
-            float(row["corner_score"]),
-            float(scaled_surface),
-        )
-        return abs(pred - float(row["psa_actual_grade"]))
-    except Exception:
-        return None
-
-
-def compute_surface_scale_from_history(df: pd.DataFrame):
-    if df is None or df.empty:
-        return DEFAULT_SURFACE_SCALE, 0, "default"
-
-    needed = ["horizontal_ratio", "vertical_ratio", "corner_score", "edge_score", "surface_score", "psa_actual_grade"]
-    if not all(c in df.columns for c in needed):
-        return DEFAULT_SURFACE_SCALE, 0, "default"
-
-    work = df.dropna(subset=needed).copy()
-    if len(work) < MIN_SURFACE_CALIBRATION_ROWS:
-        return DEFAULT_SURFACE_SCALE, len(work), "default"
-
-    candidates = np.arange(0.55, 0.71, 0.01)
-    best_scale = DEFAULT_SURFACE_SCALE
-    best_mae = None
-
-    for scale in candidates:
-        maes = work.apply(lambda row: simulate_grade_for_scale(row, float(scale)), axis=1)
-        maes = pd.to_numeric(maes, errors="coerce").dropna()
-        if maes.empty:
-            continue
-        current_mae = float(maes.mean())
-        if best_mae is None or current_mae < best_mae:
-            best_mae = current_mae
-            best_scale = float(scale)
-
-    return round(best_scale, 2), len(work), "auto"
+def adjust_inputs_for_grading(
+    horizontal_ratio: float,
+    vertical_ratio: float,
+    corner_score: float,
+    edge_score: float,
+    surface_score: float
+):
+    h_adj = clip01(horizontal_ratio)
+    v_adj = clip01(vertical_ratio * 0.97)
+    corner_adj = clip01(corner_score * 1.08 + 0.08)
+    edge_adj = clip01(edge_score)
+    surface_adj = clip01(surface_score * 0.68 + 0.025)
+    return h_adj, v_adj, corner_adj, edge_adj, surface_adj
 
 # ============================================================
 # GRADE MODEL
@@ -786,12 +747,16 @@ def compute_fitted_grade(
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
-    centering_cap = centering_psa_grade(h, v)
-    corner_cap = corner_grade_band(corner)
-    edge_cap = edge_grade_band(edge)
-    surface_cap = surface_grade_band(surface)
+    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
+        h, v, corner, edge, surface
+    )
 
-    overall = compute_fitted_grade(h, v, corner, edge, surface)
+    centering_cap = centering_psa_grade(h_adj, v_adj)
+    corner_cap = corner_grade_band(corner_adj)
+    edge_cap = edge_grade_band(edge_adj)
+    surface_cap = surface_grade_band(surface_adj)
+
+    overall = compute_fitted_grade(h_adj, v_adj, corner_adj, edge_adj, surface_adj)
 
     cap_values = {
         "Centering": centering_cap,
@@ -805,6 +770,11 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         "overall_grade": overall,
         "candidate_grade": overall,
         "raw_candidate_grade": overall,
+        "adjusted_horizontal_ratio": round(h_adj, 4),
+        "adjusted_vertical_ratio": round(v_adj, 4),
+        "adjusted_corner_score": round(corner_adj, 4),
+        "adjusted_edge_score": round(edge_adj, 4),
+        "adjusted_surface_score": round(surface_adj, 4),
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -819,7 +789,10 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    return compute_fitted_grade(h, v, corner, edge, surface)
+    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
+        h, v, corner, edge, surface
+    )
+    return compute_fitted_grade(h_adj, v_adj, corner_adj, edge_adj, surface_adj)
 
 # ============================================================
 # CONFIDENCE LAYER (V9.7)
@@ -858,20 +831,24 @@ def compute_confidence(
     used_surface_fallback: bool = False,
     corner_count: int = 0
 ) -> dict:
-    centering_band = centering_psa_grade(h, v)
-    corner_band = corner_grade_band(corner)
-    edge_band = edge_grade_band(edge)
-    surface_band = surface_grade_band(surface)
+    h_adj, v_adj, corner_adj, edge_adj, surface_adj = adjust_inputs_for_grading(
+        h, v, corner, edge, surface
+    )
+
+    centering_band = centering_psa_grade(h_adj, v_adj)
+    corner_band = corner_grade_band(corner_adj)
+    edge_band = edge_grade_band(edge_adj)
+    surface_band = surface_grade_band(surface_adj)
 
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
     agreement_score = max(0.0, 1.0 - (spread / 5.5))
 
-    d_center = band_distance_centering(h, v)
-    d_corner = band_distance_corner(corner)
-    d_edge = band_distance_edge(edge)
-    d_surface = band_distance_surface(surface)
+    d_center = band_distance_centering(h_adj, v_adj)
+    d_corner = band_distance_corner(corner_adj)
+    d_edge = band_distance_edge(edge_adj)
+    d_surface = band_distance_surface(surface_adj)
 
     center_conf = min(1.0, d_center / 0.075)
     corner_conf = min(1.0, d_corner / 0.12)
@@ -1000,14 +977,14 @@ def decision_panel_admin(
         st.write("Historical Sample Size:", grade_range["sample_size"])
 
     st.markdown("### Centering")
-    st.write("Horizontal Centering:", ratio_to_psa_centering(h))
-    st.write("Vertical Centering:", ratio_to_psa_centering(v))
-    st.write("Centering Grade:", centering_psa_grade(h, v))
+    st.write("Horizontal Centering:", ratio_to_psa_centering(caps["adjusted_horizontal_ratio"]))
+    st.write("Vertical Centering:", ratio_to_psa_centering(caps["adjusted_vertical_ratio"]))
+    st.write("Centering Grade:", centering_psa_grade(caps["adjusted_horizontal_ratio"], caps["adjusted_vertical_ratio"]))
 
     st.markdown("### Subgrades (Out of 10)")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
+    st.write("Corners:", corner_subgrade(caps["adjusted_corner_score"]))
+    st.write("Edges:", edge_subgrade(caps["adjusted_edge_score"]))
+    st.write("Surface:", surface_subgrade(caps["adjusted_surface_score"]))
 
     st.markdown("### Confidence Breakdown")
     st.write("Agreement Score:", confidence["agreement_score"])
@@ -1017,6 +994,9 @@ def decision_panel_admin(
 
     st.markdown("### Fitted Formula Output")
     st.write("Raw Formula Grade:", caps["raw_candidate_grade"])
+    st.write("Adjusted Vertical Ratio:", caps["adjusted_vertical_ratio"])
+    st.write("Adjusted Corner Score:", caps["adjusted_corner_score"])
+    st.write("Adjusted Surface Score:", caps["adjusted_surface_score"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -1034,6 +1014,8 @@ def decision_panel_user(
     submit: dict,
     grade_range: dict
 ) -> None:
+    caps = compute_psa_caps(h, v, edge, corner, surface)
+
     if submit["submit_label"] == "Strong Submit":
         st.success("STRONG SUBMIT")
     elif submit["submit_label"] == "Submit":
@@ -1060,13 +1042,13 @@ def decision_panel_user(
     """, unsafe_allow_html=True)
 
     st.markdown("### Centering")
-    st.write("Horizontal:", ratio_to_psa_centering(h))
-    st.write("Vertical:", ratio_to_psa_centering(v))
+    st.write("Horizontal:", ratio_to_psa_centering(caps["adjusted_horizontal_ratio"]))
+    st.write("Vertical:", ratio_to_psa_centering(caps["adjusted_vertical_ratio"]))
 
     st.markdown("### Subgrades")
-    st.write("Corners:", corner_subgrade(corner))
-    st.write("Edges:", edge_subgrade(edge))
-    st.write("Surface:", surface_subgrade(surface))
+    st.write("Corners:", corner_subgrade(caps["adjusted_corner_score"]))
+    st.write("Edges:", edge_subgrade(caps["adjusted_edge_score"]))
+    st.write("Surface:", surface_subgrade(caps["adjusted_surface_score"]))
 
 # ============================================================
 # ACCESS + GUIDE
@@ -1104,21 +1086,17 @@ else:
     st.stop()
 
 # ============================================================
-# LOAD DATA FOR RANGE + ADMIN + CALIBRATION
+# LOAD DATA FOR RANGE + ADMIN
 # ============================================================
 
 all_submissions_df = pd.DataFrame()
 range_table = pd.DataFrame()
-surface_scale = DEFAULT_SURFACE_SCALE
-surface_scale_rows = 0
-surface_scale_source = "default"
 
 try:
     range_resp = requests.get(TABLE_URL, headers=headers, timeout=30)
     if range_resp.status_code == 200:
         all_submissions_df = pd.DataFrame(range_resp.json())
         range_table = build_grade_range_table(all_submissions_df)
-        surface_scale, surface_scale_rows, surface_scale_source = compute_surface_scale_from_history(all_submissions_df)
 except Exception:
     all_submissions_df = pd.DataFrame()
     range_table = pd.DataFrame()
@@ -1414,8 +1392,6 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
-    surface = apply_surface_scale(float(surface), float(surface_scale))
-
     player_meta = detect_player_name(front_bytes)
     detected_player_name = player_meta.get("player_name")
     detected_player_confidence = player_meta.get("player_name_confidence")
@@ -1426,8 +1402,7 @@ if st.button("Run Analysis"):
     else:
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
-    raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
-    grade = raw_grade
+    grade = compute_grade(h, v, edge, corner, float(surface))
 
     confidence = compute_confidence(
         h=h,
@@ -1455,6 +1430,10 @@ if st.button("Run Analysis"):
         max_width=320
     )
 
+    adjusted_h, adjusted_v, adjusted_corner, adjusted_edge, adjusted_surface = adjust_inputs_for_grading(
+        h, v, corner, edge, float(surface)
+    )
+
     st.session_state.analysis_payload = {
         "user_entered_player_name": user_entered_player_name,
         "manufacturer": manufacturer,
@@ -1473,13 +1452,17 @@ if st.button("Run Analysis"):
         "edge_score": edge,
         "corner_score": corner,
         "surface_score": float(surface),
+        "adjusted_horizontal_ratio": adjusted_h,
+        "adjusted_vertical_ratio": adjusted_v,
+        "adjusted_edge_score": adjusted_edge,
+        "adjusted_corner_score": adjusted_corner,
+        "adjusted_surface_score": adjusted_surface,
         "scratch_score": scratch_score,
         "speckle_score": speckle_score,
         "gloss_score": gloss_score,
         "surface_data": surface_data,
         "used_surface_fallback": used_surface_fallback,
         "grade": grade,
-        "raw_grade": raw_grade,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
@@ -1495,9 +1478,6 @@ if st.button("Run Analysis"):
         "corner2_source_mode": corner2_mode,
         "corner3_source_mode": corner3_mode if corner3_obj is not None else None,
         "corner4_source_mode": corner4_mode if corner4_obj is not None else None,
-        "surface_scale_used": surface_scale,
-        "surface_scale_rows": surface_scale_rows,
-        "surface_scale_source": surface_scale_source,
     }
     st.session_state.analysis_front_bytes = front_bytes
     st.session_state.analysis_back_bytes = back_bytes
@@ -1597,20 +1577,18 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.markdown("### Raw Feature Values")
         st.write("Horizontal Ratio:", round(result["horizontal_ratio"], 4))
         st.write("Vertical Ratio:", round(result["vertical_ratio"], 4))
-        st.write("Horizontal Centering:", ratio_to_psa_centering(result["horizontal_ratio"]))
-        st.write("Vertical Centering:", ratio_to_psa_centering(result["vertical_ratio"]))
         st.write("Corner Score:", round(result["corner_score"], 4))
-        st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
-        st.write("Raw Formula Grade:", round(float(result["raw_grade"]), 2))
+        st.write("Adjusted Horizontal Ratio:", round(result["adjusted_horizontal_ratio"], 4))
+        st.write("Adjusted Vertical Ratio:", round(result["adjusted_vertical_ratio"], 4))
+        st.write("Adjusted Corner Score:", round(result["adjusted_corner_score"], 4))
+        st.write("Adjusted Edge Score:", round(result["adjusted_edge_score"], 4))
+        st.write("Adjusted Surface Score:", round(float(result["adjusted_surface_score"]), 4))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Front Source:", result["front_source_mode"])
         st.write("Back Source:", result["back_source_mode"])
-        st.write("Surface Scale Used:", result["surface_scale_used"])
-        st.write("Surface Scale Source:", result["surface_scale_source"])
-        st.write("Surface Scale Rows:", result["surface_scale_rows"])
         if result["scratch_score"] is not None:
             st.write("Scratch Score:", round(float(result["scratch_score"]), 4))
         if result["speckle_score"] is not None:
@@ -1669,11 +1647,15 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "edge_score": json_safe(result["edge_score"]),
             "corner_score": json_safe(result["corner_score"]),
             "surface_score": json_safe(result["surface_score"]),
+            "adjusted_horizontal_ratio": json_safe(result["adjusted_horizontal_ratio"]),
+            "adjusted_vertical_ratio": json_safe(result["adjusted_vertical_ratio"]),
+            "adjusted_edge_score": json_safe(result["adjusted_edge_score"]),
+            "adjusted_corner_score": json_safe(result["adjusted_corner_score"]),
+            "adjusted_surface_score": json_safe(result["adjusted_surface_score"]),
             "scratch_score": json_safe(result["scratch_score"]),
             "speckle_score": json_safe(result["speckle_score"]),
             "gloss_score": json_safe(result["gloss_score"]),
             "calibrated_grade": json_safe(result["grade"]),
-            "raw_formula_grade": json_safe(result["raw_grade"]),
             "confidence_score": json_safe(result["confidence"]["confidence_score"]),
             "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
             "confidence_label": json_safe(result["confidence"]["confidence_label"]),
@@ -1706,9 +1688,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "front_image_hash": json_safe(result["front_image_hash"]),
             "corner_count_used": json_safe(result["corner_count"]),
             "used_surface_fallback": json_safe(result["used_surface_fallback"]),
-            "surface_scale_used": json_safe(result["surface_scale_used"]),
-            "surface_scale_source": json_safe(result["surface_scale_source"]),
-            "surface_scale_rows": json_safe(result["surface_scale_rows"]),
         }
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
@@ -1735,10 +1714,6 @@ if user_role == "admin":
         st.stop()
 
     st.write("Total:", len(df))
-    st.write("Surface Scale Active:", surface_scale)
-    st.write("Surface Scale Source:", surface_scale_source)
-    st.write("Surface Scale Rows:", surface_scale_rows)
-
     df = add_grade_band_columns(df)
 
     if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
@@ -1905,7 +1880,6 @@ if user_role == "admin":
         "manual_centering_used",
         "corner_count_used",
         "used_surface_fallback",
-        "surface_scale_used",
         "front_image_url",
         "card_id",
     ]
@@ -2043,8 +2017,6 @@ if user_role == "admin":
                     row_surface = 0.12
                     used_surface_fallback = True
 
-                row_surface = apply_surface_scale(float(row_surface), float(surface_scale))
-
                 corner_urls = [
                     row.get("corner1_image_url"),
                     row.get("corner2_image_url"),
@@ -2085,8 +2057,7 @@ if user_role == "admin":
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
 
-                raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
-                new_grade = raw_grade
+                new_grade = compute_grade(h, v, edge, corner, float(row_surface))
 
                 confidence = compute_confidence(
                     h=h,
@@ -2108,6 +2079,10 @@ if user_role == "admin":
                 current_grade_range = lookup_grade_range(new_grade, range_table)
                 new_card_id = str(uuid.uuid4())
 
+                adjusted_h, adjusted_v, adjusted_corner, adjusted_edge, adjusted_surface = adjust_inputs_for_grading(
+                    h, v, corner, edge, float(row_surface)
+                )
+
                 new_data = {
                     "card_id": new_card_id,
                     "model_version": MODEL_VERSION,
@@ -2123,10 +2098,14 @@ if user_role == "admin":
                     "edge_score": json_safe(edge),
                     "corner_score": json_safe(corner),
                     "surface_score": json_safe(row_surface),
+                    "adjusted_horizontal_ratio": json_safe(adjusted_h),
+                    "adjusted_vertical_ratio": json_safe(adjusted_v),
+                    "adjusted_edge_score": json_safe(adjusted_edge),
+                    "adjusted_corner_score": json_safe(adjusted_corner),
+                    "adjusted_surface_score": json_safe(adjusted_surface),
                     "scratch_score": json_safe(row_scratch),
                     "speckle_score": json_safe(row_speckle),
                     "gloss_score": json_safe(row_gloss),
-                    "raw_formula_grade": json_safe(raw_grade),
                     "calibrated_grade": json_safe(new_grade),
                     "confidence_score": json_safe(confidence["confidence_score"]),
                     "confidence_percent": json_safe(confidence["confidence_percent"]),
@@ -2160,9 +2139,6 @@ if user_role == "admin":
                     "grade_band_mae": json_safe(current_grade_range["mae"]),
                     "front_image_hash": json_safe(front_image_hash),
                     "corner_count_used": json_safe(corner_count_used),
-                    "surface_scale_used": json_safe(surface_scale),
-                    "surface_scale_source": json_safe(surface_scale_source),
-                    "surface_scale_rows": json_safe(surface_scale_rows),
                 }
 
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
