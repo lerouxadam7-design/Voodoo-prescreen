@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-surface-calibrated-band-calibrated"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 DEFAULT_SURFACE_SCALE = 0.63
 MIN_SURFACE_CALIBRATION_ROWS = 10
@@ -702,6 +702,12 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
 # SURFACE CALIBRATION
 # ============================================================
 
+def apply_surface_scale(surface: float, scale: float) -> float:
+    s = max(0.0, min(1.0, float(surface)))
+    out = s * float(scale)
+    return float(max(0.0, min(1.0, out)))
+
+
 def simulate_grade_for_scale(row: pd.Series, scale: float):
     needed = ["horizontal_ratio", "vertical_ratio", "corner_score", "edge_score", "surface_score", "psa_actual_grade"]
     if not all(c in row.index for c in needed):
@@ -751,12 +757,6 @@ def compute_surface_scale_from_history(df: pd.DataFrame):
 
     return round(best_scale, 2), len(work), "auto"
 
-
-def apply_surface_scale(surface: float, scale: float) -> float:
-    s = max(0.0, min(1.0, float(surface)))
-    out = s * float(scale)
-    return float(max(0.0, min(1.0, out)))
-
 # ============================================================
 # GRADE MODEL
 # ============================================================
@@ -785,33 +785,13 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
-def apply_grade_band_calibration(raw_grade: float) -> float:
-    g = float(raw_grade)
-
-    if g < 8.0:
-        g -= 0.20
-    elif g < 8.5:
-        g += 0.34
-    elif g < 9.0:
-        g += 0.58
-    elif g < 9.5:
-        g -= 0.03
-    elif g < 9.7:
-        g += 0.00
-    else:
-        g += 0.00
-
-    return round(max(1.0, min(10.0, g)), 2)
-
-
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
     centering_cap = centering_psa_grade(h, v)
     corner_cap = corner_grade_band(corner)
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    raw_overall = compute_fitted_grade(h, v, corner, edge, surface)
-    overall = apply_grade_band_calibration(raw_overall)
+    overall = compute_fitted_grade(h, v, corner, edge, surface)
 
     cap_values = {
         "Centering": centering_cap,
@@ -824,7 +804,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": overall,
         "candidate_grade": overall,
-        "raw_candidate_grade": raw_overall,
+        "raw_candidate_grade": overall,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -839,8 +819,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
 
 
 def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    raw_grade = compute_fitted_grade(h, v, corner, edge, surface)
-    return apply_grade_band_calibration(raw_grade)
+    return compute_fitted_grade(h, v, corner, edge, surface)
 
 # ============================================================
 # CONFIDENCE LAYER (V9.7)
@@ -1038,7 +1017,6 @@ def decision_panel_admin(
 
     st.markdown("### Fitted Formula Output")
     st.write("Raw Formula Grade:", caps["raw_candidate_grade"])
-    st.write("Calibrated Grade:", caps["candidate_grade"])
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -1449,7 +1427,7 @@ if st.button("Run Analysis"):
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
-    grade = apply_grade_band_calibration(raw_grade)
+    grade = raw_grade
 
     confidence = compute_confidence(
         h=h,
@@ -2108,7 +2086,7 @@ if user_role == "admin":
                     corner_count_used = len(fresh_corner_scores)
 
                 raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
-                new_grade = apply_grade_band_calibration(raw_grade)
+                new_grade = raw_grade
 
                 confidence = compute_confidence(
                     h=h,
