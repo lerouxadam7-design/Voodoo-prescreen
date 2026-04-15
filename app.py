@@ -151,14 +151,6 @@ tbody tr td {
     padding: 0.5rem;
     background: rgba(255,255,255,0.03);
 }
-.manual-center-wrap {
-    max-width: 330px;
-}
-.manual-center-image-note {
-    font-size: 0.78rem;
-    color: #dddddd;
-    margin-bottom: 8px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -168,10 +160,10 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v9.6-ui-corner-storage-v9.7-confidence-submit-surface-calibrated"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-surface-calibrated-manual-rescore"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 DEFAULT_SURFACE_SCALE = 0.63
-MIN_CALIBRATION_ROWS = 10
+MIN_SURFACE_CALIBRATION_ROWS = 10
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
@@ -192,10 +184,6 @@ upload_headers = {
     "apikey": SUPABASE_KEY,
     "Content-Type": "image/jpeg",
 }
-
-# ============================================================
-# SESSION STATE
-# ============================================================
 
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = str(uuid.uuid4())
@@ -746,67 +734,51 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
 # SURFACE CALIBRATION
 # ============================================================
 
-def simulate_surface_scale_bias(df: pd.DataFrame, scale: float) -> float:
-    needed = [
-        "psa_actual_grade",
-        "horizontal_ratio",
-        "vertical_ratio",
-        "corner_score",
-        "edge_score",
-        "surface_score",
-    ]
-    if df.empty or not all(c in df.columns for c in needed):
-        return 999.0
+def simulate_grade_for_scale(row: pd.Series, scale: float):
+    needed = ["horizontal_ratio", "vertical_ratio", "corner_score", "edge_score", "surface_score", "psa_actual_grade"]
+    if not all(c in row.index for c in needed):
+        return None
 
-    work = df.dropna(subset=needed).copy()
-    if work.empty:
-        return 999.0
-
-    errors = []
-    for _, row in work.iterrows():
-        scaled_surface = max(0.0, min(1.0, float(row["surface_score"]) * scale))
-        pred = compute_fitted_grade(
+    try:
+        if any(pd.isna(row[c]) for c in needed):
+            return None
+        scaled_surface = apply_surface_scale(float(row["surface_score"]), float(scale))
+        pred = compute_grade(
             float(row["horizontal_ratio"]),
             float(row["vertical_ratio"]),
-            float(row["corner_score"]),
             float(row["edge_score"]),
+            float(row["corner_score"]),
             float(scaled_surface),
         )
-        errors.append(pred - float(row["psa_actual_grade"]))
-
-    if len(errors) == 0:
-        return 999.0
-
-    return float(np.mean(np.abs(errors)))
+        return abs(pred - float(row["psa_actual_grade"]))
+    except Exception:
+        return None
 
 
 def compute_surface_scale_from_history(df: pd.DataFrame):
     if df is None or df.empty:
         return DEFAULT_SURFACE_SCALE, 0, "default"
 
-    needed = [
-        "psa_actual_grade",
-        "horizontal_ratio",
-        "vertical_ratio",
-        "corner_score",
-        "edge_score",
-        "surface_score",
-    ]
+    needed = ["horizontal_ratio", "vertical_ratio", "corner_score", "edge_score", "surface_score", "psa_actual_grade"]
     if not all(c in df.columns for c in needed):
         return DEFAULT_SURFACE_SCALE, 0, "default"
 
     work = df.dropna(subset=needed).copy()
-    if len(work) < MIN_CALIBRATION_ROWS:
+    if len(work) < MIN_SURFACE_CALIBRATION_ROWS:
         return DEFAULT_SURFACE_SCALE, len(work), "default"
 
-    candidate_scales = np.arange(0.55, 0.71, 0.01)
+    candidates = np.arange(0.55, 0.71, 0.01)
     best_scale = DEFAULT_SURFACE_SCALE
-    best_mae = 999.0
+    best_mae = None
 
-    for scale in candidate_scales:
-        mae = simulate_surface_scale_bias(work, float(scale))
-        if mae < best_mae:
-            best_mae = mae
+    for scale in candidates:
+        maes = work.apply(lambda row: simulate_grade_for_scale(row, float(scale)), axis=1)
+        maes = pd.to_numeric(maes, errors="coerce").dropna()
+        if maes.empty:
+            continue
+        current_mae = float(maes.mean())
+        if best_mae is None or current_mae < best_mae:
+            best_mae = current_mae
             best_scale = float(scale)
 
     return round(best_scale, 2), len(work), "auto"
@@ -1074,13 +1046,6 @@ def decision_panel_admin(
     st.write("Data Quality Score:", confidence["data_score"])
     st.write("Band Spread:", confidence["band_spread"])
 
-    st.markdown("### Fitted Formula Output")
-    st.write("Predicted Grade:", caps["candidate_grade"])
-    st.write("Centering Band:", caps["centering_cap"])
-    st.write("Corner Band:", caps["corner_cap"])
-    st.write("Edge Band:", caps["edge_cap"])
-    st.write("Surface Band:", caps["surface_cap"])
-
 
 def decision_panel_user(
     grade: float,
@@ -1297,11 +1262,9 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="manual-center-image-note">Image rotated 90 degrees clockwise for manual centering. Use the sliders below to line up the card edges.</div>',
+            '<div class="small-note">Image rotated 90 degrees clockwise for manual centering. Use fine sliders for precise mobile adjustment.</div>',
             unsafe_allow_html=True
         )
-
-        st.markdown('<div class="manual-center-wrap">', unsafe_allow_html=True)
 
         left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
         right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
@@ -1313,10 +1276,7 @@ if use_manual_centering:
         top_y = (top_percent / 100.0) * display_height
         bottom_y = (bottom_percent / 100.0) * display_height
 
-        st.markdown("### Centering Preview")
         render_overlay_image(display_image, left_x, right_x, top_y, bottom_y)
-
-        st.markdown("</div>", unsafe_allow_html=True)
 
         if right_x <= left_x or bottom_y <= top_y:
             st.error("Right must be right of left, and bottom must be below top.")
@@ -1438,7 +1398,7 @@ if st.button("Run Analysis"):
         corner = 0.5
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
-        corner = float(min(corner_scores))
+        corner = min(corner_scores)
 
     surface = None
     scratch_score = None
@@ -1579,11 +1539,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     typed_player_name = result.get("user_entered_player_name")
 
     st.markdown("### Player Name")
-
-    if typed_player_name and str(typed_player_name).strip():
-        if not st.session_state.player_name_edit:
-            st.session_state.player_name_edit = str(typed_player_name).strip()
-
     if detected_player_name:
         msg = f"Detected player: {detected_player_name}"
         if detected_player_confidence is not None:
@@ -1786,7 +1741,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
                 st.write("DEBUG payload grade:", payload["calibrated_grade"])
                 st.write("DEBUG front_image_hash:", payload["front_image_hash"])
                 st.write("DEBUG grade range:", result["grade_range"])
-                st.write("DEBUG surface scale:", result["surface_scale_used"])
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
 
@@ -1814,7 +1768,7 @@ if user_role == "admin":
     st.write("Total:", len(df))
     st.write("Surface Scale Active:", surface_scale)
     st.write("Surface Scale Source:", surface_scale_source)
-    st.write("Surface Calibration Rows:", surface_scale_rows)
+    st.write("Surface Scale Rows:", surface_scale_rows)
 
     df = add_grade_band_columns(df)
 
@@ -1996,7 +1950,7 @@ if user_role == "admin":
         worst_cols = [c for c in [
             "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
             "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "corner_count_used", "used_surface_fallback", "surface_scale_used", "card_id"
+            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
@@ -2029,7 +1983,6 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    applies the current surface calibration scale,
     then applies the current grading, confidence, and submit logic.
     </div>
     """, unsafe_allow_html=True)
@@ -2086,15 +2039,14 @@ if user_role == "admin":
                 v = float(analyze_data["vertical_ratio"])
                 edge = float(analyze_data["edge_score"])
 
-                manual_centering_used = parse_bool(row.get("manual_centering_used"))
+                manual_used = parse_bool(row.get("manual_centering_used"))
                 manual_h = row.get("front_horizontal_ratio_manual")
                 manual_v = row.get("front_vertical_ratio_manual")
 
-                if manual_centering_used:
+                if manual_used and pd.notna(manual_h) and pd.notna(manual_v):
                     try:
-                        if pd.notna(manual_h) and pd.notna(manual_v):
-                            h = float(manual_h)
-                            v = float(manual_v)
+                        h = float(manual_h)
+                        v = float(manual_v)
                     except Exception:
                         pass
 
