@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-legacy-data-calibration-outlier-controlled"
+MODEL_VERSION = "v10.6-ui-with-v9.6-raw-grade-logic"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -576,6 +576,7 @@ def render_image_slot(label: str, slot_name: str, required: bool):
     st.markdown("</div>", unsafe_allow_html=True)
     return obj, mode
 
+
 def upload_optional_image(image_bytes, filename):
     if image_bytes is None:
         return None
@@ -696,7 +697,7 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# RAW GRADE MODEL
+# V9.6 RAW GRADE MODEL
 # ============================================================
 
 def compute_fitted_grade(
@@ -734,45 +735,7 @@ def apply_calibration(
     used_surface_fallback: bool,
     manual_centering_used: bool,
 ):
-    grade = float(raw_grade)
-
-    # 1. Base shift
-    grade += 0.25
-
-    # 2. Surface primary driver
-    grade += (float(surface) - 0.09) * 3.0
-
-    # 3. Reduce corner influence
-    grade += (0.5 - float(corner)) * 0.12
-
-    # 4. Grade band correction
-    if float(raw_grade) >= 9.0:
-        grade += 0.30
-    elif float(raw_grade) >= 8.5:
-        grade += 0.15
-    elif float(raw_grade) <= 7.5:
-        grade -= 0.10
-
-    # 5. Manual centering bonus
-    if bool(manual_centering_used):
-        grade += 0.05
-
-    # 6. Outlier control
-    if grade < 6.5 and float(raw_grade) > 7.5:
-        grade = 6.5 + (grade - 6.5) * 0.3
-
-    if grade > 9.5 and float(raw_grade) < 9.0:
-        grade = 9.5 + (grade - 9.5) * 0.3
-
-    # 7. Surface fallback penalty
-    if bool(used_surface_fallback):
-        grade -= 0.05
-
-    # 8. Clamp extremes
-    grade = max(5.5, min(10.0, grade))
-
-    grading_path = "legacy_optimized_outlier_controlled"
-    return round(grade, 2), grading_path
+    return round(float(raw_grade), 2), "v9.6_raw_logic"
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -808,7 +771,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     }
 
 # ============================================================
-# CONFIDENCE LAYER (V9.7)
+# V9.6 CONFIDENCE LAYER
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -852,49 +815,48 @@ def compute_confidence(
     bands = [centering_band, corner_band, edge_band, surface_band]
 
     spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 5.5))
+    agreement_score = max(0.0, 1.0 - (spread / 4.0))
 
     d_center = band_distance_centering(h, v)
     d_corner = band_distance_corner(corner)
     d_edge = band_distance_edge(edge)
     d_surface = band_distance_surface(surface)
 
-    center_conf = min(1.0, d_center / 0.075)
-    corner_conf = min(1.0, d_corner / 0.12)
-    edge_conf = min(1.0, d_edge / 0.018)
-    surface_conf = min(1.0, d_surface / 0.05)
+    center_conf = min(1.0, d_center / 0.05)
+    corner_conf = min(1.0, d_corner / 0.08)
+    edge_conf = min(1.0, d_edge / 0.01)
+    surface_conf = min(1.0, d_surface / 0.03)
 
     threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
 
     data_score = 1.0
     if used_surface_fallback:
-        data_score -= 0.12
-    if corner_count < 2:
         data_score -= 0.20
+    if corner_count < 2:
+        data_score -= 0.25
     elif corner_count == 2:
-        data_score -= 0.03
+        data_score -= 0.05
 
     data_score = max(0.0, min(1.0, data_score))
 
     confidence_raw = (
-        0.50 * agreement_score +
-        0.30 * threshold_score +
-        0.20 * data_score
+        0.45 * agreement_score +
+        0.40 * threshold_score +
+        0.15 * data_score
     )
 
     confidence_raw = max(0.0, min(1.0, confidence_raw))
-    confidence_percent = round(confidence_raw * 100.0, 1)
 
-    if confidence_percent >= 75:
+    if confidence_raw >= 0.80:
         label = "High"
-    elif confidence_percent >= 55:
+    elif confidence_raw >= 0.60:
         label = "Moderate"
     else:
         label = "Low"
 
     return {
         "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": confidence_percent,
+        "confidence_percent": round(confidence_raw * 100, 1),
         "confidence_label": label,
         "agreement_score": round(agreement_score, 3),
         "threshold_score": round(threshold_score, 3),
@@ -907,7 +869,7 @@ def compute_confidence(
     }
 
 # ============================================================
-# SUBMIT RULES (V9.7)
+# V9.6 SUBMIT RULES
 # ============================================================
 
 def compute_submit_probability(
@@ -918,15 +880,15 @@ def compute_submit_probability(
 ) -> dict:
     confidence_percent = confidence_score * 100.0
 
-    if grade >= 9.4:
+    if grade >= 9.3 and confidence_percent >= 85.0:
         label = "Strong Submit"
         probability = 0.95
-    elif grade >= 9.0:
+    elif grade >= 9.3 and confidence_percent < 85.0:
         label = "Submit"
-        probability = 0.82
-    elif 8.6 <= grade < 9.0 and confidence_percent >= 58.0:
+        probability = 0.80
+    elif 8.4 < grade < 9.3 and confidence_percent > 80.0:
         label = "Risky"
-        probability = 0.58
+        probability = 0.55
     else:
         label = "Do Not Submit"
         probability = 0.15
@@ -974,8 +936,8 @@ def decision_panel_admin(
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.75 else
-        "Moderate" if confidence["confidence_score"] >= 0.55 else
+        "Low" if confidence["confidence_score"] >= 0.80 else
+        "Moderate" if confidence["confidence_score"] >= 0.60 else
         "High"
     )
     st.write("Limiting Feature:", caps["limiter"])
@@ -1938,7 +1900,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the outlier-controlled legacy calibration path.
+    then applies the raw v9.6 grading logic without any added calibration layer.
     </div>
     """, unsafe_allow_html=True)
 
