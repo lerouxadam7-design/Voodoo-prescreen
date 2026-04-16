@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-raw-formula-plus-calibration"
+MODEL_VERSION = "v10.6-ui-v9.7-raw-formula-refined-calibration"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -737,26 +737,22 @@ def apply_calibration(
 ):
     grade = float(raw_grade)
 
-    grade += 0.45
-
-    if float(surface) > 0.10:
-        grade += 0.25
-    elif float(surface) > 0.08:
-        grade += 0.15
+    grade += 0.30
+    grade += (float(surface) - 0.08) * 2.5
 
     if int(corner_count_used) == 0:
-        grade += 0.20
+        grade += 0.10
     elif int(corner_count_used) == 2:
-        grade += 0.05
+        grade += 0.03
 
     if bool(manual_centering_used):
+        grade += 0.07
+
+    if float(raw_grade) >= 9.0:
         grade += 0.10
 
-    if float(raw_grade) >= 8.8:
-        grade += 0.20
-
     if float(raw_grade) <= 7.5:
-        grade -= 0.10
+        grade -= 0.08
 
     return round(max(1.0, min(10.0, grade)), 2)
 
