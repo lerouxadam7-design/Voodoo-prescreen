@@ -768,7 +768,6 @@ def apply_legacy_calibration(
 ) -> float:
     grade = float(raw_grade)
 
-    # intentionally simple and stable for legacy fallback corner rows
     grade += 0.25
 
     if bool(manual_centering_used):
@@ -790,7 +789,7 @@ def apply_calibration(
     corner_count_used: int,
     used_surface_fallback: bool,
     manual_centering_used: bool,
-) -> tuple[float, str]:
+):
     if int(corner_count_used) >= 2:
         return (
             apply_fresh_calibration(
@@ -1748,7 +1747,6 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "front_image_hash": json_safe(result["front_image_hash"]),
             "corner_count_used": json_safe(result["corner_count"]),
             "used_surface_fallback": json_safe(result["used_surface_fallback"]),
-            "analysis_notes": json_safe(result["grading_path"]),
         }
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
@@ -1941,7 +1939,6 @@ if user_role == "admin":
         "manual_centering_used",
         "corner_count_used",
         "used_surface_fallback",
-        "analysis_notes",
         "front_image_url",
         "card_id",
     ]
@@ -1955,7 +1952,7 @@ if user_role == "admin":
         worst_cols = [c for c in [
             "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
             "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "corner_count_used", "used_surface_fallback", "analysis_notes", "card_id"
+            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
@@ -2205,7 +2202,6 @@ if user_role == "admin":
                     "grade_band_mae": json_safe(current_grade_range["mae"]),
                     "front_image_hash": json_safe(front_image_hash),
                     "corner_count_used": json_safe(corner_count_used),
-                    "analysis_notes": json_safe(grading_path),
                 }
 
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
