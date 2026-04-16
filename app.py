@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-legacy-data-calibration"
+MODEL_VERSION = "v10.6-ui-legacy-data-calibration-outlier-controlled"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -576,7 +576,6 @@ def render_image_slot(label: str, slot_name: str, required: bool):
     st.markdown("</div>", unsafe_allow_html=True)
     return obj, mode
 
-
 def upload_optional_image(image_bytes, filename):
     if image_bytes is None:
         return None
@@ -737,34 +736,43 @@ def apply_calibration(
 ):
     grade = float(raw_grade)
 
-    # Global shift
-    grade += 0.30
+    # 1. Base shift
+    grade += 0.25
 
-    # Surface is strongest current signal
-    grade += (float(surface) - 0.09) * 3.5
+    # 2. Surface primary driver
+    grade += (float(surface) - 0.09) * 3.0
 
-    # Corner signal is noisy in current legacy dataset, so keep influence light
-    grade += (0.5 - float(corner)) * 0.15
+    # 3. Reduce corner influence
+    grade += (0.5 - float(corner)) * 0.12
 
-    # Grade-band correction
+    # 4. Grade band correction
     if float(raw_grade) >= 9.0:
-        grade += 0.25
+        grade += 0.30
     elif float(raw_grade) >= 8.5:
-        grade += 0.10
+        grade += 0.15
     elif float(raw_grade) <= 7.5:
         grade -= 0.10
 
-    # Manual centering bonus
+    # 5. Manual centering bonus
     if bool(manual_centering_used):
         grade += 0.05
 
-    # Small penalty if surface fallback was used
+    # 6. Outlier control
+    if grade < 6.5 and float(raw_grade) > 7.5:
+        grade = 6.5 + (grade - 6.5) * 0.3
+
+    if grade > 9.5 and float(raw_grade) < 9.0:
+        grade = 9.5 + (grade - 9.5) * 0.3
+
+    # 7. Surface fallback penalty
     if bool(used_surface_fallback):
         grade -= 0.05
 
-    grading_path = "legacy_calibration_path"
+    # 8. Clamp extremes
+    grade = max(5.5, min(10.0, grade))
 
-    return round(max(1.0, min(10.0, grade)), 2), grading_path
+    grading_path = "legacy_optimized_outlier_controlled"
+    return round(grade, 2), grading_path
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -1930,7 +1938,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the legacy-data calibration path built around your current dataset.
+    then applies the outlier-controlled legacy calibration path.
     </div>
     """, unsafe_allow_html=True)
 
