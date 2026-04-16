@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula-surface-corner-fix"
+MODEL_VERSION = "v10.6-ui-v9.7-raw-formula-plus-calibration"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -697,7 +697,7 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# GRADE MODEL
+# RAW GRADE MODEL
 # ============================================================
 
 def compute_fitted_grade(
@@ -720,6 +720,43 @@ def compute_fitted_grade(
         + 38.67 * surface_bad
         - 350.94 * (surface_bad ** 2)
     )
+
+    return round(max(1.0, min(10.0, grade)), 2)
+
+
+def apply_calibration(
+    raw_grade,
+    surface,
+    corner,
+    edge,
+    h,
+    v,
+    corner_count_used,
+    used_surface_fallback,
+    manual_centering_used,
+):
+    grade = float(raw_grade)
+
+    grade += 0.45
+
+    if float(surface) > 0.10:
+        grade += 0.25
+    elif float(surface) > 0.08:
+        grade += 0.15
+
+    if int(corner_count_used) == 0:
+        grade += 0.20
+    elif int(corner_count_used) == 2:
+        grade += 0.05
+
+    if bool(manual_centering_used):
+        grade += 0.10
+
+    if float(raw_grade) >= 8.8:
+        grade += 0.20
+
+    if float(raw_grade) <= 7.5:
+        grade -= 0.10
 
     return round(max(1.0, min(10.0, grade)), 2)
 
@@ -903,7 +940,8 @@ def decision_panel_admin(
     surface: float,
     confidence: dict,
     submit: dict,
-    grade_range: dict
+    grade_range: dict,
+    raw_grade: float
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
@@ -955,7 +993,8 @@ def decision_panel_admin(
     st.write("Band Spread:", confidence["band_spread"])
 
     st.markdown("### Fitted Formula Output")
-    st.write("Raw Formula Grade:", caps["raw_candidate_grade"])
+    st.write("Raw Formula Grade:", raw_grade)
+    st.write("Calibrated Grade:", grade)
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -1313,9 +1352,6 @@ if st.button("Run Analysis"):
         corner = min(corner_scores)
         corner_count_used = len(corner_scores)
 
-    if corner_count_used == 0:
-        corner = max(0.0, min(1.0, corner * 1.05 + 0.05))
-
     surface = None
     scratch_score = None
     speckle_score = None
@@ -1354,8 +1390,6 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
-    surface = max(0.0, min(1.0, float(surface) * 0.75 + 0.02))
-
     player_meta = detect_player_name(front_bytes)
     detected_player_name = player_meta.get("player_name")
     detected_player_confidence = player_meta.get("player_name_confidence")
@@ -1367,7 +1401,17 @@ if st.button("Run Analysis"):
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
-    grade = raw_grade
+    grade = apply_calibration(
+        raw_grade=raw_grade,
+        surface=surface,
+        corner=corner,
+        edge=edge,
+        h=h,
+        v=v,
+        corner_count_used=corner_count_used,
+        used_surface_fallback=used_surface_fallback,
+        manual_centering_used=use_manual_centering,
+    )
 
     confidence = compute_confidence(
         h=h,
@@ -1504,6 +1548,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["confidence"],
             result["submit"],
             result["grade_range"],
+            result["raw_grade"],
         )
     else:
         decision_panel_user(
@@ -1606,8 +1651,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "scratch_score": json_safe(result["scratch_score"]),
             "speckle_score": json_safe(result["speckle_score"]),
             "gloss_score": json_safe(result["gloss_score"]),
-            "calibrated_grade": json_safe(result["grade"]),
             "raw_formula_grade": json_safe(result["raw_grade"]),
+            "calibrated_grade": json_safe(result["grade"]),
             "confidence_score": json_safe(result["confidence"]["confidence_score"]),
             "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
             "confidence_label": json_safe(result["confidence"]["confidence_label"]),
@@ -1878,7 +1923,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the current grading, confidence, and submit logic.
+    then applies the current grading, calibration, confidence, and submit logic.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1969,8 +2014,6 @@ if user_role == "admin":
                     row_surface = 0.12
                     used_surface_fallback = True
 
-                row_surface = max(0.0, min(1.0, float(row_surface) * 0.75 + 0.02))
-
                 corner_urls = [
                     row.get("corner1_image_url"),
                     row.get("corner2_image_url"),
@@ -2011,11 +2054,18 @@ if user_role == "admin":
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
 
-                if corner_count_used == 0:
-                    corner = max(0.0, min(1.0, corner * 1.05 + 0.05))
-
                 raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
-                new_grade = raw_grade
+                new_grade = apply_calibration(
+                    raw_grade=raw_grade,
+                    surface=row_surface,
+                    corner=corner,
+                    edge=edge,
+                    h=h,
+                    v=v,
+                    corner_count_used=corner_count_used,
+                    used_surface_fallback=used_surface_fallback,
+                    manual_centering_used=manual_used,
+                )
 
                 confidence = compute_confidence(
                     h=h,
