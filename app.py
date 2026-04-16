@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula"
+MODEL_VERSION = "v10.6-ui-v9.7-confidence-submit-raw-formula-surface-corner-fix"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -1307,9 +1307,14 @@ if st.button("Run Analysis"):
 
     if len(corner_scores) == 0:
         corner = 0.5
+        corner_count_used = 0
         st.warning("All corner analyses failed. Using neutral corner score.")
     else:
         corner = min(corner_scores)
+        corner_count_used = len(corner_scores)
+
+    if corner_count_used == 0:
+        corner = max(0.0, min(1.0, corner * 1.05 + 0.05))
 
     surface = None
     scratch_score = None
@@ -1349,6 +1354,8 @@ if st.button("Run Analysis"):
         used_surface_fallback = True
         st.warning("Surface model not applied. Using fallback surface score of 0.12.")
 
+    surface = max(0.0, min(1.0, float(surface) * 0.75 + 0.02))
+
     player_meta = detect_player_name(front_bytes)
     detected_player_name = player_meta.get("player_name")
     detected_player_confidence = player_meta.get("player_name_confidence")
@@ -1369,7 +1376,7 @@ if st.button("Run Analysis"):
         corner=corner,
         surface=float(surface),
         used_surface_fallback=used_surface_fallback,
-        corner_count=len(corner_scores),
+        corner_count=corner_count_used,
     )
 
     submit = compute_submit_probability(
@@ -1420,7 +1427,7 @@ if st.button("Run Analysis"):
         "detected_player_name": detected_player_name,
         "detected_player_confidence": detected_player_confidence,
         "detected_player_source": detected_player_source,
-        "corner_count": len(corner_scores),
+        "corner_count": corner_count_used,
         "front_image_hash": front_image_hash,
         "front_source_mode": front_mode,
         "back_source_mode": back_mode,
@@ -1962,6 +1969,8 @@ if user_role == "admin":
                     row_surface = 0.12
                     used_surface_fallback = True
 
+                row_surface = max(0.0, min(1.0, float(row_surface) * 0.75 + 0.02))
+
                 corner_urls = [
                     row.get("corner1_image_url"),
                     row.get("corner2_image_url"),
@@ -2001,6 +2010,9 @@ if user_role == "admin":
                 else:
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
+
+                if corner_count_used == 0:
+                    corner = max(0.0, min(1.0, corner * 1.05 + 0.05))
 
                 raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
                 new_grade = raw_grade
