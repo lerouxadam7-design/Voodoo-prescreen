@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-split-fresh-vs-legacy-corner-paths"
+MODEL_VERSION = "v10.6-ui-legacy-data-calibration"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -724,61 +724,6 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
-def apply_fresh_calibration(
-    raw_grade: float,
-    surface: float,
-    corner: float,
-    edge: float,
-    h: float,
-    v: float,
-    corner_count_used: int,
-    used_surface_fallback: bool,
-    manual_centering_used: bool,
-) -> float:
-    grade = float(raw_grade)
-
-    grade += 0.30
-    grade += (float(surface) - 0.08) * 2.5
-
-    if int(corner_count_used) == 2:
-        grade += 0.03
-
-    if bool(manual_centering_used):
-        grade += 0.07
-
-    if float(raw_grade) >= 9.0:
-        grade += 0.10
-
-    if float(raw_grade) <= 7.5:
-        grade -= 0.08
-
-    return round(max(1.0, min(10.0, grade)), 2)
-
-
-def apply_legacy_calibration(
-    raw_grade: float,
-    surface: float,
-    corner: float,
-    edge: float,
-    h: float,
-    v: float,
-    corner_count_used: int,
-    used_surface_fallback: bool,
-    manual_centering_used: bool,
-) -> float:
-    grade = float(raw_grade)
-
-    grade += 0.25
-
-    if bool(manual_centering_used):
-        grade += 0.05
-
-    if bool(used_surface_fallback):
-        grade -= 0.05
-
-    return round(max(1.0, min(10.0, grade)), 2)
-
-
 def apply_calibration(
     raw_grade: float,
     surface: float,
@@ -790,36 +735,36 @@ def apply_calibration(
     used_surface_fallback: bool,
     manual_centering_used: bool,
 ):
-    if int(corner_count_used) >= 2:
-        return (
-            apply_fresh_calibration(
-                raw_grade=raw_grade,
-                surface=surface,
-                corner=corner,
-                edge=edge,
-                h=h,
-                v=v,
-                corner_count_used=corner_count_used,
-                used_surface_fallback=used_surface_fallback,
-                manual_centering_used=manual_centering_used,
-            ),
-            "fresh_corner_path",
-        )
+    grade = float(raw_grade)
 
-    return (
-        apply_legacy_calibration(
-            raw_grade=raw_grade,
-            surface=surface,
-            corner=corner,
-            edge=edge,
-            h=h,
-            v=v,
-            corner_count_used=corner_count_used,
-            used_surface_fallback=used_surface_fallback,
-            manual_centering_used=manual_centering_used,
-        ),
-        "legacy_corner_fallback_path",
-    )
+    # Global shift
+    grade += 0.30
+
+    # Surface is strongest current signal
+    grade += (float(surface) - 0.09) * 3.5
+
+    # Corner signal is noisy in current legacy dataset, so keep influence light
+    grade += (0.5 - float(corner)) * 0.15
+
+    # Grade-band correction
+    if float(raw_grade) >= 9.0:
+        grade += 0.25
+    elif float(raw_grade) >= 8.5:
+        grade += 0.10
+    elif float(raw_grade) <= 7.5:
+        grade -= 0.10
+
+    # Manual centering bonus
+    if bool(manual_centering_used):
+        grade += 0.05
+
+    # Small penalty if surface fallback was used
+    if bool(used_surface_fallback):
+        grade -= 0.05
+
+    grading_path = "legacy_calibration_path"
+
+    return round(max(1.0, min(10.0, grade)), 2), grading_path
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -1985,7 +1930,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then sends the card through either the fresh-corner path or the legacy fallback path.
+    then applies the legacy-data calibration path built around your current dataset.
     </div>
     """, unsafe_allow_html=True)
 
