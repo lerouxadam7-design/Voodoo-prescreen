@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.7-raw-formula-refined-calibration"
+MODEL_VERSION = "v10.6-ui-split-fresh-vs-legacy-corner-paths"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -724,25 +724,23 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
-def apply_calibration(
-    raw_grade,
-    surface,
-    corner,
-    edge,
-    h,
-    v,
-    corner_count_used,
-    used_surface_fallback,
-    manual_centering_used,
-):
+def apply_fresh_calibration(
+    raw_grade: float,
+    surface: float,
+    corner: float,
+    edge: float,
+    h: float,
+    v: float,
+    corner_count_used: int,
+    used_surface_fallback: bool,
+    manual_centering_used: bool,
+) -> float:
     grade = float(raw_grade)
 
     grade += 0.30
     grade += (float(surface) - 0.08) * 2.5
 
-    if int(corner_count_used) == 0:
-        grade += 0.10
-    elif int(corner_count_used) == 2:
+    if int(corner_count_used) == 2:
         grade += 0.03
 
     if bool(manual_centering_used):
@@ -755,6 +753,74 @@ def apply_calibration(
         grade -= 0.08
 
     return round(max(1.0, min(10.0, grade)), 2)
+
+
+def apply_legacy_calibration(
+    raw_grade: float,
+    surface: float,
+    corner: float,
+    edge: float,
+    h: float,
+    v: float,
+    corner_count_used: int,
+    used_surface_fallback: bool,
+    manual_centering_used: bool,
+) -> float:
+    grade = float(raw_grade)
+
+    # intentionally simple and stable for legacy fallback corner rows
+    grade += 0.25
+
+    if bool(manual_centering_used):
+        grade += 0.05
+
+    if bool(used_surface_fallback):
+        grade -= 0.05
+
+    return round(max(1.0, min(10.0, grade)), 2)
+
+
+def apply_calibration(
+    raw_grade: float,
+    surface: float,
+    corner: float,
+    edge: float,
+    h: float,
+    v: float,
+    corner_count_used: int,
+    used_surface_fallback: bool,
+    manual_centering_used: bool,
+) -> tuple[float, str]:
+    if int(corner_count_used) >= 2:
+        return (
+            apply_fresh_calibration(
+                raw_grade=raw_grade,
+                surface=surface,
+                corner=corner,
+                edge=edge,
+                h=h,
+                v=v,
+                corner_count_used=corner_count_used,
+                used_surface_fallback=used_surface_fallback,
+                manual_centering_used=manual_centering_used,
+            ),
+            "fresh_corner_path",
+        )
+
+    return (
+        apply_legacy_calibration(
+            raw_grade=raw_grade,
+            surface=surface,
+            corner=corner,
+            edge=edge,
+            h=h,
+            v=v,
+            corner_count_used=corner_count_used,
+            used_surface_fallback=used_surface_fallback,
+            manual_centering_used=manual_centering_used,
+        ),
+        "legacy_corner_fallback_path",
+    )
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -788,10 +854,6 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
         "edge_strength": round(edge_cap / 10.0, 3),
         "surface_strength": round(surface_cap / 10.0, 3),
     }
-
-
-def compute_grade(h: float, v: float, edge: float, corner: float, surface: float) -> float:
-    return compute_fitted_grade(h, v, corner, edge, surface)
 
 # ============================================================
 # CONFIDENCE LAYER (V9.7)
@@ -937,7 +999,8 @@ def decision_panel_admin(
     confidence: dict,
     submit: dict,
     grade_range: dict,
-    raw_grade: float
+    raw_grade: float,
+    grading_path: str
 ) -> None:
     caps = compute_psa_caps(h, v, edge, corner, surface)
 
@@ -991,6 +1054,7 @@ def decision_panel_admin(
     st.markdown("### Fitted Formula Output")
     st.write("Raw Formula Grade:", raw_grade)
     st.write("Calibrated Grade:", grade)
+    st.write("Grading Path:", grading_path)
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
@@ -1397,7 +1461,7 @@ if st.button("Run Analysis"):
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
-    grade = apply_calibration(
+    grade, grading_path = apply_calibration(
         raw_grade=raw_grade,
         surface=surface,
         corner=corner,
@@ -1460,6 +1524,7 @@ if st.button("Run Analysis"):
         "used_surface_fallback": used_surface_fallback,
         "grade": grade,
         "raw_grade": raw_grade,
+        "grading_path": grading_path,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
@@ -1545,6 +1610,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["submit"],
             result["grade_range"],
             result["raw_grade"],
+            result["grading_path"],
         )
     else:
         decision_panel_user(
@@ -1584,6 +1650,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Raw Formula Grade:", round(float(result["raw_grade"]), 2))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
+        st.write("Grading Path:", result["grading_path"])
         st.write("Front Source:", result["front_source_mode"])
         st.write("Back Source:", result["back_source_mode"])
         if result["scratch_score"] is not None:
@@ -1681,6 +1748,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "front_image_hash": json_safe(result["front_image_hash"]),
             "corner_count_used": json_safe(result["corner_count"]),
             "used_surface_fallback": json_safe(result["used_surface_fallback"]),
+            "analysis_notes": json_safe(result["grading_path"]),
         }
 
         save_response = requests.post(TABLE_URL, json=payload, headers=headers, timeout=30)
@@ -1873,6 +1941,7 @@ if user_role == "admin":
         "manual_centering_used",
         "corner_count_used",
         "used_surface_fallback",
+        "analysis_notes",
         "front_image_url",
         "card_id",
     ]
@@ -1886,7 +1955,7 @@ if user_role == "admin":
         worst_cols = [c for c in [
             "created_at", "player_name", "manufacturer", "stock_type", "calibrated_grade",
             "psa_actual_grade", "error", "abs_error", "confidence_percent", "submit_label",
-            "manual_centering_used", "corner_count_used", "used_surface_fallback", "card_id"
+            "manual_centering_used", "corner_count_used", "used_surface_fallback", "analysis_notes", "card_id"
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
@@ -1919,7 +1988,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the current grading, calibration, confidence, and submit logic.
+    then sends the card through either the fresh-corner path or the legacy fallback path.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1935,6 +2004,7 @@ if user_role == "admin":
             new_grade = None
             confidence = {}
             submit = {}
+            grading_path = None
 
             try:
                 front_url = row.get("front_image_url")
@@ -2051,7 +2121,7 @@ if user_role == "admin":
                     corner_count_used = len(fresh_corner_scores)
 
                 raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
-                new_grade = apply_calibration(
+                new_grade, grading_path = apply_calibration(
                     raw_grade=raw_grade,
                     surface=row_surface,
                     corner=corner,
@@ -2135,6 +2205,7 @@ if user_role == "admin":
                     "grade_band_mae": json_safe(current_grade_range["mae"]),
                     "front_image_hash": json_safe(front_image_hash),
                     "corner_count_used": json_safe(corner_count_used),
+                    "analysis_notes": json_safe(grading_path),
                 }
 
                 post_resp = requests.post(TABLE_URL, json=new_data, headers=headers, timeout=30)
@@ -2151,6 +2222,7 @@ if user_role == "admin":
             status_box.write(
                 f"Processed {idx}/{total_rows} | "
                 f"source_card_id={row.get('card_id')} | "
+                f"path={grading_path if grading_path else 'n/a'} | "
                 f"grade={new_grade if new_grade is not None else 'n/a'} | "
                 f"confidence={confidence.get('confidence_percent', 'n/a')} | "
                 f"submit={submit.get('submit_label', 'n/a')} | "
