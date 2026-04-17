@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit"
+MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit-confidence-v2"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -791,31 +791,26 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     }
 
 # ============================================================
-# CONFIDENCE
+# CONFIDENCE V2
 # ============================================================
 
-def band_distance_centering(h: float, v: float) -> float:
-    worst = min(float(h), float(v))
-    thresholds = [0.70, 0.80, 0.90]
-    return min(abs(worst - t) for t in thresholds)
+def boundary_distance_confidence(surface: float, edge: float, h: float) -> float:
+    d_surface = abs(float(surface) - 0.1213)
+    d_edge = abs(float(edge) - 0.01355)
+    d_center = abs(float(h) - 0.7933)
+
+    score = (
+        min(d_surface / 0.03, 1.0) +
+        min(d_edge / 0.01, 1.0) +
+        min(d_center / 0.10, 1.0)
+    ) / 3.0
+
+    return max(0.0, min(1.0, score))
 
 
-def band_distance_corner(corner: float) -> float:
-    c = remap_corner_for_model(corner)
-    thresholds = [0.38, 0.46, 0.51, 0.58]
-    return min(abs(c - t) for t in thresholds)
-
-
-def band_distance_edge(edge: float) -> float:
-    e = max(0.0, min(1.0, float(edge)))
-    thresholds = [0.006, 0.012, 0.020, 0.032]
-    return min(abs(e - t) for t in thresholds)
-
-
-def band_distance_surface(surface: float) -> float:
-    s = max(0.0, min(1.0, float(surface)))
-    thresholds = [0.08, 0.10, 0.13, 0.16]
-    return min(abs(s - t) for t in thresholds)
+def model_agreement_confidence(raw_grade: float, piecewise_grade: float) -> float:
+    diff = abs(float(raw_grade) - float(piecewise_grade))
+    return max(0.0, min(1.0, 1.0 - (diff / 2.0)))
 
 
 def compute_confidence(
@@ -824,66 +819,51 @@ def compute_confidence(
     edge: float,
     corner: float,
     surface: float,
+    raw_grade: float,
+    final_grade: float,
     used_surface_fallback: bool = False,
     corner_count: int = 0
 ) -> dict:
-    centering_band = centering_psa_grade(h, v)
-    corner_band = corner_grade_band(corner)
-    edge_band = edge_grade_band(edge)
-    surface_band = surface_grade_band(surface)
-
-    bands = [centering_band, corner_band, edge_band, surface_band]
-    spread = max(bands) - min(bands)
-    agreement_score = max(0.0, 1.0 - (spread / 4.0))
-
-    d_center = band_distance_centering(h, v)
-    d_corner = band_distance_corner(corner)
-    d_edge = band_distance_edge(edge)
-    d_surface = band_distance_surface(surface)
-
-    center_conf = min(1.0, d_center / 0.05)
-    corner_conf = min(1.0, d_corner / 0.08)
-    edge_conf = min(1.0, d_edge / 0.01)
-    surface_conf = min(1.0, d_surface / 0.03)
-
-    threshold_score = (center_conf + corner_conf + edge_conf + surface_conf) / 4.0
+    boundary_score = boundary_distance_confidence(surface=surface, edge=edge, h=h)
+    agreement_score = model_agreement_confidence(raw_grade=raw_grade, piecewise_grade=final_grade)
 
     data_score = 1.0
     if used_surface_fallback:
         data_score -= 0.20
     if corner_count < 2:
-        data_score -= 0.25
+        data_score -= 0.20
     elif corner_count == 2:
         data_score -= 0.05
 
     data_score = max(0.0, min(1.0, data_score))
 
     confidence_raw = (
-        0.45 * agreement_score +
-        0.40 * threshold_score +
-        0.15 * data_score
+        0.50 * boundary_score +
+        0.30 * agreement_score +
+        0.20 * data_score
     )
     confidence_raw = max(0.0, min(1.0, confidence_raw))
+    confidence_percent = round(confidence_raw * 100.0, 1)
 
-    if confidence_raw >= 0.80:
+    if confidence_percent >= 75:
         label = "High"
-    elif confidence_raw >= 0.60:
+    elif confidence_percent >= 55:
         label = "Moderate"
     else:
         label = "Low"
 
     return {
         "confidence_score": round(confidence_raw, 3),
-        "confidence_percent": round(confidence_raw * 100, 1),
+        "confidence_percent": confidence_percent,
         "confidence_label": label,
+        "boundary_score": round(boundary_score, 3),
         "agreement_score": round(agreement_score, 3),
-        "threshold_score": round(threshold_score, 3),
         "data_score": round(data_score, 3),
-        "band_spread": round(spread, 2),
-        "centering_band": centering_band,
-        "corner_band": corner_band,
-        "edge_band": edge_band,
-        "surface_band": surface_band,
+        "band_spread": None,
+        "centering_band": centering_psa_grade(h, v),
+        "corner_band": corner_grade_band(corner),
+        "edge_band": edge_grade_band(edge),
+        "surface_band": surface_grade_band(surface),
     }
 
 # ============================================================
@@ -894,7 +874,7 @@ def compute_submit_probability(
     grade: float,
     confidence_score: float,
     surface: float,
-    band_spread: float
+    band_spread
 ) -> dict:
     confidence_percent = confidence_score * 100.0
 
@@ -954,11 +934,10 @@ def decision_panel_admin(
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
         "Risk Level:",
-        "Low" if confidence["confidence_score"] >= 0.80 else
-        "Moderate" if confidence["confidence_score"] >= 0.60 else
+        "Low" if confidence["confidence_score"] >= 0.75 else
+        "Moderate" if confidence["confidence_score"] >= 0.55 else
         "High"
     )
-    st.write("Limiting Feature:", caps["limiter"])
 
     st.markdown("### Expected PSA Range")
     st.write("Predicted Band:", grade_range["band"])
@@ -978,10 +957,9 @@ def decision_panel_admin(
     st.write("Surface:", surface_subgrade(surface))
 
     st.markdown("### Confidence Breakdown")
-    st.write("Agreement Score:", confidence["agreement_score"])
-    st.write("Threshold Score:", confidence["threshold_score"])
+    st.write("Boundary Score:", confidence["boundary_score"])
+    st.write("Model Agreement Score:", confidence["agreement_score"])
     st.write("Data Quality Score:", confidence["data_score"])
-    st.write("Band Spread:", confidence["band_spread"])
 
     st.markdown("### Formula Output")
     st.write("Raw Formula Grade:", raw_grade)
@@ -1411,6 +1389,8 @@ if st.button("Run Analysis"):
         edge=edge,
         corner=corner,
         surface=float(surface),
+        raw_grade=raw_grade,
+        final_grade=grade,
         used_surface_fallback=used_surface_fallback,
         corner_count=corner_count_used,
     )
@@ -1584,6 +1564,9 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Grading Path:", result["grading_path"])
+        st.write("Boundary Score:", result["confidence"]["boundary_score"])
+        st.write("Model Agreement Score:", result["confidence"]["agreement_score"])
+        st.write("Data Quality Score:", result["confidence"]["data_score"])
         st.write("Front Source:", result["front_source_mode"])
         st.write("Back Source:", result["back_source_mode"])
         if result["scratch_score"] is not None:
@@ -1653,9 +1636,9 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             "confidence_percent": json_safe(result["confidence"]["confidence_percent"]),
             "confidence_label": json_safe(result["confidence"]["confidence_label"]),
             "agreement_score": json_safe(result["confidence"]["agreement_score"]),
-            "threshold_score": json_safe(result["confidence"]["threshold_score"]),
+            "threshold_score": json_safe(result["confidence"]["boundary_score"]),
             "data_score": json_safe(result["confidence"]["data_score"]),
-            "band_spread": json_safe(result["confidence"]["band_spread"]),
+            "band_spread": json_safe(None),
             "submit_probability": json_safe(result["submit"]["submit_probability"]),
             "submit_percent": json_safe(result["submit"]["submit_percent"]),
             "submit_label": json_safe(result["submit"]["submit_label"]),
@@ -1919,7 +1902,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the piecewise benchmark-fit grading rule.
+    then applies the piecewise benchmark-fit grading rule and the updated confidence model.
     </div>
     """, unsafe_allow_html=True)
 
@@ -2070,6 +2053,8 @@ if user_role == "admin":
                     edge=edge,
                     corner=corner,
                     surface=float(row_surface),
+                    raw_grade=raw_grade,
+                    final_grade=new_grade,
                     used_surface_fallback=used_surface_fallback,
                     corner_count=corner_count_used,
                 )
@@ -2108,9 +2093,9 @@ if user_role == "admin":
                     "confidence_percent": json_safe(confidence["confidence_percent"]),
                     "confidence_label": json_safe(confidence["confidence_label"]),
                     "agreement_score": json_safe(confidence["agreement_score"]),
-                    "threshold_score": json_safe(confidence["threshold_score"]),
+                    "threshold_score": json_safe(confidence["boundary_score"]),
                     "data_score": json_safe(confidence["data_score"]),
-                    "band_spread": json_safe(confidence["band_spread"]),
+                    "band_spread": json_safe(None),
                     "submit_probability": json_safe(submit["submit_probability"]),
                     "submit_percent": json_safe(submit["submit_percent"]),
                     "submit_label": json_safe(submit["submit_label"]),
