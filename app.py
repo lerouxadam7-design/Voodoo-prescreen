@@ -160,7 +160,7 @@ st.title("VOODOO SPORTS GRADING")
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-v9.6-raw-plus-targeted-corrections"
+MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
@@ -697,7 +697,7 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
     }
 
 # ============================================================
-# V9.6 RAW GRADE MODEL + TARGETED CORRECTIONS
+# BASE RAW FORMULA (kept for diagnostics)
 # ============================================================
 
 def compute_fitted_grade(
@@ -724,6 +724,25 @@ def compute_fitted_grade(
     return round(max(1.0, min(10.0, grade)), 2)
 
 
+def apply_piecewise_grade(surface_score: float, edge_score: float, horizontal_ratio: float) -> float:
+    s = float(surface_score)
+    e = float(edge_score)
+    h = float(horizontal_ratio)
+
+    if s <= 0.1213:
+        if e <= 0.01355:
+            grade = 9.3947
+        else:
+            grade = 8.0
+    else:
+        if h <= 0.7933:
+            grade = 6.5
+        else:
+            grade = 8.75
+
+    return round(max(1.0, min(10.0, grade)), 2)
+
+
 def apply_calibration(
     raw_grade: float,
     surface: float,
@@ -735,43 +754,8 @@ def apply_calibration(
     used_surface_fallback: bool,
     manual_centering_used: bool,
 ):
-    return round(float(raw_grade), 2), "v9.6_raw_logic"
-
-
-def apply_final_adjustments(
-    grade: float,
-    raw_grade: float,
-    surface: float,
-    edge: float,
-    corner: float,
-    h: float,
-    v: float,
-) -> float:
-    g = float(grade)
-
-    # 1. Fix false low grades
-    if g < 6.5 and float(surface) < 0.11:
-        g += 1.2
-
-    if g < 7.0 and float(edge) < 0.02:
-        g += 0.8
-
-    # 2. Fix false high grades
-    if g > 9.5 and float(surface) > 0.10:
-        g -= 0.9
-
-    if g > 9.5 and float(edge) > 0.02:
-        g -= 0.7
-
-    # 3. Mid-range stability
-    if 9.2 <= g <= 9.8 and float(surface) > 0.095:
-        g -= 0.4
-
-    # 4. Soft floor
-    if g < 5.5:
-        g = 5.5 + (g - 5.5) * 0.25
-
-    return round(max(1.0, min(10.0, g)), 2)
+    grade = apply_piecewise_grade(surface_score=surface, edge_score=edge, horizontal_ratio=h)
+    return grade, "piecewise_surface_edge_centering"
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -780,7 +764,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     edge_cap = edge_grade_band(edge)
     surface_cap = surface_grade_band(surface)
 
-    overall = compute_fitted_grade(h, v, corner, edge, surface)
+    overall = apply_piecewise_grade(surface_score=surface, edge_score=edge, horizontal_ratio=h)
 
     cap_values = {
         "Centering": centering_cap,
@@ -793,7 +777,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": overall,
         "candidate_grade": overall,
-        "raw_candidate_grade": overall,
+        "raw_candidate_grade": compute_fitted_grade(h, v, corner, edge, surface),
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
         "edge_cap": round(edge_cap, 2),
@@ -807,7 +791,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     }
 
 # ============================================================
-# V9.6 CONFIDENCE LAYER
+# CONFIDENCE
 # ============================================================
 
 def band_distance_centering(h: float, v: float) -> float:
@@ -849,7 +833,6 @@ def compute_confidence(
     surface_band = surface_grade_band(surface)
 
     bands = [centering_band, corner_band, edge_band, surface_band]
-
     spread = max(bands) - min(bands)
     agreement_score = max(0.0, 1.0 - (spread / 4.0))
 
@@ -880,7 +863,6 @@ def compute_confidence(
         0.40 * threshold_score +
         0.15 * data_score
     )
-
     confidence_raw = max(0.0, min(1.0, confidence_raw))
 
     if confidence_raw >= 0.80:
@@ -905,7 +887,7 @@ def compute_confidence(
     }
 
 # ============================================================
-# V9.6 SUBMIT RULES
+# SUBMIT RULES
 # ============================================================
 
 def compute_submit_probability(
@@ -1001,9 +983,9 @@ def decision_panel_admin(
     st.write("Data Quality Score:", confidence["data_score"])
     st.write("Band Spread:", confidence["band_spread"])
 
-    st.markdown("### Fitted Formula Output")
+    st.markdown("### Formula Output")
     st.write("Raw Formula Grade:", raw_grade)
-    st.write("Calibrated Grade:", grade)
+    st.write("Piecewise Grade:", grade)
     st.write("Grading Path:", grading_path)
     st.write("Centering Band:", caps["centering_cap"])
     st.write("Corner Band:", caps["corner_cap"])
@@ -1411,7 +1393,7 @@ if st.button("Run Analysis"):
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
     raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
-    base_grade, grading_path = apply_calibration(
+    grade, grading_path = apply_calibration(
         raw_grade=raw_grade,
         surface=surface,
         corner=corner,
@@ -1421,15 +1403,6 @@ if st.button("Run Analysis"):
         corner_count_used=corner_count_used,
         used_surface_fallback=used_surface_fallback,
         manual_centering_used=use_manual_centering,
-    )
-    grade = apply_final_adjustments(
-        grade=base_grade,
-        raw_grade=raw_grade,
-        surface=float(surface),
-        edge=float(edge),
-        corner=float(corner),
-        h=float(h),
-        v=float(v),
     )
 
     confidence = compute_confidence(
@@ -1483,8 +1456,7 @@ if st.button("Run Analysis"):
         "used_surface_fallback": used_surface_fallback,
         "grade": grade,
         "raw_grade": raw_grade,
-        "base_grade": base_grade,
-        "grading_path": "v9.6_raw_logic_plus_targeted_corrections",
+        "grading_path": grading_path,
         "grade_range": grade_range,
         "confidence": confidence,
         "submit": submit,
@@ -1608,7 +1580,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
         st.write("Raw Formula Grade:", round(float(result["raw_grade"]), 2))
-        st.write("Base Grade Before Final Adjustments:", round(float(result["base_grade"]), 2))
+        st.write("Piecewise Grade:", round(float(result["grade"]), 2))
         st.write("Corner Count Used:", result["corner_count"])
         st.write("Used Surface Fallback:", result["used_surface_fallback"])
         st.write("Grading Path:", result["grading_path"])
@@ -1947,7 +1919,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies raw v9.6 grading logic followed by targeted final adjustments for known failure cases.
+    then applies the piecewise benchmark-fit grading rule.
     </div>
     """, unsafe_allow_html=True)
 
@@ -2056,7 +2028,6 @@ if user_role == "admin":
                         if corner_img_resp.status_code != 200:
                             continue
 
-                            # unreachable but harmless
                         corner_resp = requests.post(
                             f"{API_BASE}/analyze_corner",
                             files={"file": ("corner.jpg", corner_img_resp.content, "image/jpeg")},
@@ -2081,7 +2052,7 @@ if user_role == "admin":
                     corner_count_used = len(fresh_corner_scores)
 
                 raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
-                base_grade, _ = apply_calibration(
+                new_grade, grading_path = apply_calibration(
                     raw_grade=raw_grade,
                     surface=row_surface,
                     corner=corner,
@@ -2092,16 +2063,6 @@ if user_role == "admin":
                     used_surface_fallback=used_surface_fallback,
                     manual_centering_used=manual_used,
                 )
-                new_grade = apply_final_adjustments(
-                    grade=base_grade,
-                    raw_grade=raw_grade,
-                    surface=float(row_surface),
-                    edge=float(edge),
-                    corner=float(corner),
-                    h=float(h),
-                    v=float(v),
-                )
-                grading_path = "v9.6_raw_logic_plus_targeted_corrections"
 
                 confidence = compute_confidence(
                     h=h,
