@@ -13,148 +13,383 @@ import streamlit.components.v1 as components
 from PIL import Image
 
 # ============================================================
-# DESIGN THEME
+# PAGE CONFIG
 # ============================================================
 
-st.set_page_config(page_title="Voodoo Sports Grading", layout="wide")
+st.set_page_config(
+    page_title="Voodoo Sports Grading",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# ============================================================
+# PREMIUM UI THEME
+# ============================================================
 
 st.markdown("""
 <style>
+:root {
+    --bg-1: #3F1D6A;
+    --bg-2: #522C87;
+    --bg-3: #5F3A96;
+    --accent: #C9A44D;
+    --accent-soft: rgba(201,164,77,0.16);
+    --text: #F8F6FC;
+    --muted: #D8D1E6;
+    --card: rgba(255,255,255,0.06);
+    --card-strong: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.14);
+    --border-strong: rgba(201,164,77,0.32);
+    --shadow: 0 10px 30px rgba(10, 8, 20, 0.28);
+    --radius-xl: 20px;
+    --radius-lg: 16px;
+    --radius-md: 12px;
+}
+
 .stApp {
-    background: linear-gradient(90deg, #3F1D6A, #522C87, #5F3A96);
+    background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.06), transparent 28%),
+        linear-gradient(90deg, var(--bg-1), var(--bg-2), var(--bg-3));
 }
+
 html, body, [class*="css"] {
-    color: white !important;
+    color: var(--text) !important;
 }
+
+.block-container {
+    max-width: 1220px;
+    padding-top: 1.8rem;
+    padding-bottom: 2.5rem;
+}
+
 h1, h2, h3, h4, h5, h6 {
-    color: #C9A44D !important;
+    color: var(--accent) !important;
+    letter-spacing: 0.02em;
 }
-label, p, span, div, .stMarkdown {
-    color: white !important;
+
+p, span, div, label, .stMarkdown {
+    color: var(--text) !important;
 }
-.small-note {
-    color: #dddddd !important;
+
+small, .small-note {
+    color: var(--muted) !important;
     font-size: 0.85rem;
 }
+
+/* Hide default top whitespace feel */
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+/* Inputs */
 input, textarea {
-    color: black !important;
-    -webkit-text-fill-color: black !important;
-    background-color: white !important;
+    color: #111 !important;
+    -webkit-text-fill-color: #111 !important;
+    background-color: #fff !important;
+    border-radius: 12px !important;
 }
 input::placeholder, textarea::placeholder {
-    color: #444 !important;
-    -webkit-text-fill-color: #444 !important;
+    color: #555 !important;
+    -webkit-text-fill-color: #555 !important;
 }
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
-    color: black !important;
-    -webkit-text-fill-color: black !important;
-    background-color: white !important;
+    color: #111 !important;
+    -webkit-text-fill-color: #111 !important;
+    background-color: #fff !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+    min-height: 42px !important;
+}
+
+div[data-baseweb="select"] > div {
+    border-radius: 12px !important;
+    background: #fff !important;
+    color: #111 !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+    min-height: 42px !important;
 }
 div[data-baseweb="select"] * {
-    color: black !important;
+    color: #111 !important;
 }
+
+[data-baseweb="radio"] label {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 12px;
+    margin-right: 8px;
+}
+
+/* Buttons */
 .stButton > button,
 [data-testid="stDownloadButton"] > button {
-    background-color: #C9A44D !important;
-    color: black !important;
-    border-radius: 10px !important;
-    font-weight: bold !important;
+    background: linear-gradient(180deg, #D8B866, #C9A44D) !important;
+    color: #1A1621 !important;
+    border-radius: 999px !important;
+    font-weight: 700 !important;
     border: none !important;
+    min-height: 42px !important;
+    padding: 0 18px !important;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.16);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+.stButton > button:hover,
+[data-testid="stDownloadButton"] > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 24px rgba(0,0,0,0.22);
+}
+
+/* Tables and metrics */
 thead tr th,
 tbody tr td {
-    color: white !important;
+    color: var(--text) !important;
 }
 [data-testid="stMetricValue"],
 [data-testid="stMetricLabel"] {
-    color: white !important;
+    color: var(--text) !important;
 }
+[data-testid="stMetric"] {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 12px 14px;
+    box-shadow: var(--shadow);
+}
+
+/* File uploader */
 [data-testid="stFileUploader"] {
     padding: 0.1rem 0.1rem !important;
 }
 [data-testid="stFileUploader"] section {
-    padding: 0.25rem 0.4rem !important;
+    padding: 0.35rem 0.5rem !important;
     min-height: 34px !important;
+    border-radius: 14px !important;
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px dashed rgba(255,255,255,0.22) !important;
 }
 [data-testid="stFileUploader"] div {
-    font-size: 0.76rem !important;
+    font-size: 0.78rem !important;
 }
-.upload-title {
-    font-size: 0.92rem;
-    margin-bottom: 0.25rem;
+
+hr {
+    border-color: rgba(255,255,255,0.12) !important;
+}
+
+.premium-shell {
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+    border-radius: 24px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+    backdrop-filter: blur(8px);
+}
+
+.hero-wrap {
+    border: 1px solid rgba(255,255,255,0.10);
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+    border-radius: 26px;
+    padding: 28px 28px 22px 28px;
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+}
+
+.hero-title {
+    font-size: 2.1rem;
+    font-weight: 800;
+    line-height: 1.05;
+    margin: 0;
+    color: white;
+    letter-spacing: 0.03em;
+}
+
+.hero-subtitle {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 0.98rem;
+}
+
+.version-chip {
+    display: inline-block;
+    margin-top: 14px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    border: 1px solid var(--border-strong);
+    color: #FCEEC8 !important;
+    font-size: 0.82rem;
     font-weight: 700;
+    letter-spacing: 0.03em;
 }
+
+.section-card {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: var(--radius-xl);
+    padding: 18px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+}
+
+.section-title {
+    font-size: 0.88rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #F0D99A !important;
+    margin-bottom: 10px;
+    font-weight: 800;
+}
+
+.section-heading {
+    font-size: 1.18rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+    color: white;
+}
+
+.section-subtext {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin-bottom: 6px;
+}
+
 .guide-box {
-    border: 1px solid rgba(255,255,255,0.22);
-    border-radius: 10px;
-    padding: 12px;
-    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 16px 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+    box-shadow: var(--shadow);
     margin-bottom: 14px;
 }
 .guide-title {
-    font-weight: 700;
-    color: #C9A44D;
-    margin-bottom: 8px;
+    font-weight: 800;
+    color: var(--accent) !important;
+    margin-bottom: 10px;
+    letter-spacing: 0.05em;
 }
+.guide-item {
+    color: var(--text);
+    padding: 4px 0;
+}
+
 .status-good {
-    color: #86efac;
-    font-weight: 700;
+    color: #9EF0BD;
+    font-weight: 800;
 }
 .status-bad {
-    color: #fca5a5;
-    font-weight: 700;
+    color: #FFB0B0;
+    font-weight: 800;
 }
+
 .info-box {
-    border: 1px solid rgba(255,255,255,0.20);
-    border-radius: 10px;
-    padding: 10px;
-    background: rgba(255,255,255,0.04);
-    margin-top: 10px;
-    margin-bottom: 10px;
-}
-.capture-card {
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 12px;
-    padding: 10px;
-    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.05);
+    margin-top: 6px;
     margin-bottom: 12px;
+    color: var(--muted);
+}
+
+.capture-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.03));
+    margin-bottom: 12px;
+    box-shadow: var(--shadow);
 }
 .capture-title {
-    font-weight: 700;
-    color: #C9A44D;
-    margin-bottom: 6px;
+    font-weight: 800;
+    color: white !important;
+    margin-bottom: 4px;
+    font-size: 1rem;
 }
 .capture-note {
-    font-size: 0.8rem;
-    color: #dddddd;
-    margin-bottom: 6px;
+    font-size: 0.82rem;
+    color: var(--muted) !important;
+    margin-bottom: 8px;
 }
 .preview-thumb {
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 8px;
-    padding: 6px;
-    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 8px;
+    background: rgba(255,255,255,0.035);
 }
+
 .range-box {
-    border: 1px solid rgba(201,164,77,0.35);
-    border-radius: 12px;
-    padding: 10px;
-    background: rgba(201,164,77,0.08);
-    margin-top: 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 12px 14px;
+    background: rgba(201,164,77,0.09);
+    margin-top: 12px;
     margin-bottom: 10px;
+    box-shadow: var(--shadow);
 }
+
 .preview-card {
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 10px;
-    padding: 0.5rem;
-    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    box-shadow: var(--shadow);
+}
+
+.result-hero {
+    border: 1px solid var(--border-strong);
+    border-radius: 22px;
+    padding: 18px 20px;
+    background:
+        linear-gradient(180deg, rgba(201,164,77,0.12), rgba(255,255,255,0.04));
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+}
+.result-kicker {
+    font-size: 0.84rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #F3DE9D !important;
+    font-weight: 800;
+}
+.result-grade {
+    font-size: 3.1rem;
+    font-weight: 900;
+    line-height: 1;
+    color: white;
+    margin: 6px 0 0 0;
+}
+.result-copy {
+    color: var(--muted);
+    margin-top: 8px;
+}
+
+.admin-divider {
+    margin-top: 26px;
+    margin-bottom: 14px;
+}
+
+.stAlert {
+    border-radius: 16px !important;
+}
+
+[data-testid="stDataFrame"] {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("VOODOO SPORTS GRADING")
+st.markdown("""
+<div class="hero-wrap">
+    <div class="hero-title">VOODOO SPORTS GRADING</div>
+    <div class="hero-subtitle">Premium card grading workflow with image analysis, confidence scoring, and admin benchmarking.</div>
+    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.6-ui-piecewise-benchmark-fit-confidence-v2</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ============================================================
 # CONFIG
@@ -162,8 +397,6 @@ st.title("VOODOO SPORTS GRADING")
 
 MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit-confidence-v2"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
-
-st.write(f"{PRODUCTION_STATUS}: {MODEL_VERSION}")
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -925,11 +1158,14 @@ def decision_panel_admin(
     else:
         st.error("DO NOT SUBMIT")
 
-    st.markdown("### Submission Decision")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Submission Decision</div>', unsafe_allow_html=True)
     st.write("Submit Probability:", f"{submit['submit_percent']:.1f}%")
     st.write("Recommendation:", submit["submit_label"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Confidence")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Confidence</div>', unsafe_allow_html=True)
     st.write("Confidence Score:", f"{confidence['confidence_percent']:.1f}%")
     st.write("Confidence Level:", confidence["confidence_label"])
     st.write(
@@ -938,30 +1174,40 @@ def decision_panel_admin(
         "Moderate" if confidence["confidence_score"] >= 0.55 else
         "High"
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Expected PSA Range")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Expected PSA Range</div>', unsafe_allow_html=True)
     st.write("Predicted Band:", grade_range["band"])
     st.write("Expected PSA Range:", f"{grade_range['range_low']:.2f} to {grade_range['range_high']:.2f}")
     if grade_range["mae"] is not None:
         st.write("Current Margin of Error (MAE):", round(float(grade_range["mae"]), 3))
         st.write("Historical Sample Size:", grade_range["sample_size"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Centering")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Centering</div>', unsafe_allow_html=True)
     st.write("Horizontal Centering:", ratio_to_psa_centering(h))
     st.write("Vertical Centering:", ratio_to_psa_centering(v))
     st.write("Centering Grade:", centering_psa_grade(h, v))
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Subgrades (Out of 10)")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Subgrades</div>', unsafe_allow_html=True)
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Confidence Breakdown")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Confidence Breakdown</div>', unsafe_allow_html=True)
     st.write("Boundary Score:", confidence["boundary_score"])
     st.write("Model Agreement Score:", confidence["agreement_score"])
     st.write("Data Quality Score:", confidence["data_score"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Formula Output")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Formula Output</div>', unsafe_allow_html=True)
     st.write("Raw Formula Grade:", raw_grade)
     st.write("Piecewise Grade:", grade)
     st.write("Grading Path:", grading_path)
@@ -969,6 +1215,7 @@ def decision_panel_admin(
     st.write("Corner Band:", caps["corner_cap"])
     st.write("Edge Band:", caps["edge_cap"])
     st.write("Surface Band:", caps["surface_cap"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def decision_panel_user(
@@ -991,7 +1238,14 @@ def decision_panel_user(
     else:
         st.error("DO NOT SUBMIT")
 
-    st.markdown("## Result")
+    st.markdown(f"""
+    <div class="result-hero">
+        <div class="result-kicker">Grading Result</div>
+        <div class="result-grade">{grade}</div>
+        <div class="result-copy">Confidence and submission recommendation shown below.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Grade", grade)
@@ -1007,28 +1261,36 @@ def decision_panel_user(
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### Centering")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Centering</div>', unsafe_allow_html=True)
     st.write("Horizontal:", ratio_to_psa_centering(h))
     st.write("Vertical:", ratio_to_psa_centering(v))
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Subgrades")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Subgrades</div>', unsafe_allow_html=True)
     st.write("Corners:", corner_subgrade(corner))
     st.write("Edges:", edge_subgrade(edge))
     st.write("Surface:", surface_subgrade(surface))
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # ACCESS + GUIDE
 # ============================================================
 
-st.markdown("### Access")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Access</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-heading">Sign in to continue</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-subtext">Use your authorized access email to open grading and admin tools.</div>', unsafe_allow_html=True)
 user_email = st.text_input("Enter Access Email")
+st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("""
 <div class="guide-box">
-    <div class="guide-title">USER GUIDE BEST PRACTICES:</div>
-    <div>• All pictures taken from same height/zoom with similar lighting</div>
-    <div>• Take pictures of all 4 front corners</div>
-    <div>• Use manual centering</div>
+    <div class="guide-title">USER GUIDE BEST PRACTICES</div>
+    <div class="guide-item">• All pictures taken from same height/zoom with similar lighting</div>
+    <div class="guide-item">• Take pictures of all 4 front corners</div>
+    <div class="guide-item">• Use manual centering</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1071,7 +1333,9 @@ except Exception:
 # USER DATA DOWNLOAD
 # ============================================================
 
-st.markdown("## My Submission Data")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">My Submission Data</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-subtext">Load and export your saved submissions.</div>', unsafe_allow_html=True)
 
 if st.button("Load My Submission Data"):
     user_df = get_user_submissions(user_email)
@@ -1090,12 +1354,14 @@ if st.button("Load My Submission Data"):
             file_name=f"voodoo_submissions_{safe_email}.csv",
             mime="text/csv",
         )
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # CARD INFO
 # ============================================================
 
-st.markdown("## Card Information")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Card Information</div>', unsafe_allow_html=True)
 user_entered_player_name = st.text_input("Player Name")
 manufacturer = st.text_input("Manufacturer")
 stock_type = st.selectbox("Stock Type", ["paper", "chrome", "refractor", "foil", "other"])
@@ -1104,16 +1370,19 @@ psa_is_graded = st.checkbox("PSA graded?")
 psa_actual_grade = None
 if psa_is_graded:
     psa_actual_grade = st.number_input("PSA Grade", 1.0, 10.0, step=0.5)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # IMAGE INPUTS
 # ============================================================
 
-st.markdown("## Card Images")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Card Images</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-subtext">Capture a clean full front, full back, and at least two corners.</div>', unsafe_allow_html=True)
 
 clear_col, _ = st.columns([1, 3])
 with clear_col:
-    if st.button("🧹 Clear All Images"):
+    if st.button("Clear All Images"):
         st.session_state.upload_key = str(uuid.uuid4())
         st.session_state.slot_versions = {}
         reset_analysis_state()
@@ -1121,24 +1390,27 @@ with clear_col:
 
 st.markdown("""
 <div class="info-box">
-Each image slot shows only one action at a time. Choose Upload or Take Photo, then review the small preview. Use the slot's clear button to retake or replace just that image.
+Each image slot shows only one action at a time. Choose Upload or Take Photo, then review the preview. Use the slot clear button to replace only that image.
 </div>
 """, unsafe_allow_html=True)
 
 front_image_obj, front_mode = render_image_slot("Front Image", "front", required=True)
 back_image_obj, back_mode = render_image_slot("Back Image", "back", required=True)
 
-st.markdown("### Corner Images (2 Required)")
+st.markdown('<div class="section-title" style="margin-top:6px;">Corner Images</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-subtext">Two required. All four recommended.</div>', unsafe_allow_html=True)
 corner1_obj, corner1_mode = render_image_slot("Corner 1", "corner1", required=True)
 corner2_obj, corner2_mode = render_image_slot("Corner 2", "corner2", required=True)
 corner3_obj, corner3_mode = render_image_slot("Corner 3", "corner3", required=False)
 corner4_obj, corner4_mode = render_image_slot("Corner 4", "corner4", required=False)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # VALIDATION PANEL
 # ============================================================
 
-st.markdown("## Ready Check")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Ready Check</div>', unsafe_allow_html=True)
 front_ok = front_image_obj is not None
 back_ok = back_image_obj is not None
 corner_count_current = sum(1 for c in [corner1_obj, corner2_obj, corner3_obj, corner4_obj] if c is not None)
@@ -1151,12 +1423,14 @@ with v2:
     validation_status("Back Image", back_ok)
 with v3:
     validation_status("Corner Images (2+)", corners_ok)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # MANUAL CENTERING ASSIST
 # ============================================================
 
-st.markdown("## Manual Centering Assist")
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Manual Centering Assist</div>', unsafe_allow_html=True)
 use_manual_centering = st.checkbox("Use front centering assist")
 
 manual_left = manual_right = manual_top = manual_bottom = None
@@ -1214,6 +1488,7 @@ if use_manual_centering:
             st.write("Manual Horizontal Centering:", ratio_to_psa_centering(manual_h_ratio))
             st.write("Manual Vertical Centering:", ratio_to_psa_centering(manual_v_ratio))
             st.write("Manual Centering Grade:", centering_psa_grade(manual_h_ratio, manual_v_ratio))
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # RUN ANALYSIS
@@ -1470,7 +1745,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     detected_player_source = result["detected_player_source"]
     typed_player_name = result.get("user_entered_player_name")
 
-    st.markdown("### Player Name")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Player Name</div>', unsafe_allow_html=True)
     if detected_player_name:
         msg = f"Detected player: {detected_player_name}"
         if detected_player_confidence is not None:
@@ -1483,6 +1759,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Detected player: Not found")
 
     st.text_input("Player Name (edit or confirm before save)", key="player_name_edit")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     final_player_name = st.session_state.player_name_edit.strip() if st.session_state.player_name_edit else None
 
@@ -1502,13 +1779,12 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
 
     if result["preview_pack"] is not None:
         preview_img, left_x, right_x, top_y, bottom_y = result["preview_pack"]
-        st.markdown("### Card Preview")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Card Preview</div>', unsafe_allow_html=True)
         st.markdown('<div class="preview-card">', unsafe_allow_html=True)
         render_overlay_image(preview_img, left_x, right_x, top_y, bottom_y)
         st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("## Grade")
-    st.markdown(f"### {result['grade']}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     if user_role == "admin":
         decision_panel_admin(
@@ -1537,7 +1813,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             result["grade_range"],
         )
 
-    st.markdown("## About to Save")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">About to Save</div>', unsafe_allow_html=True)
     s1, s2, s3 = st.columns(3)
     with s1:
         st.write("Player Name:", final_player_name or "—")
@@ -1548,9 +1825,11 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
     with s3:
         st.write("Confidence:", f"{result['confidence']['confidence_percent']:.1f}%")
         st.write("Submit:", result["submit"]["submit_label"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if user_role == "admin":
-        st.markdown("### Raw Feature Values")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Raw Feature Values</div>', unsafe_allow_html=True)
         st.write("Horizontal Ratio:", round(result["horizontal_ratio"], 4))
         st.write("Vertical Ratio:", round(result["vertical_ratio"], 4))
         st.write("Horizontal Centering:", ratio_to_psa_centering(result["horizontal_ratio"]))
@@ -1575,6 +1854,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
             st.write("Speckle Score:", round(float(result["speckle_score"]), 4))
         if result["gloss_score"] is not None:
             st.write("Gloss Score:", round(float(result["gloss_score"]), 4))
+        st.markdown("</div>", unsafe_allow_html=True)
 
     if st.button("Save Submission"):
         front_bytes = st.session_state.analysis_front_bytes
@@ -1681,8 +1961,8 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
 # ============================================================
 
 if user_role == "admin":
-    st.markdown("---")
-    st.markdown("## Admin Dashboard")
+    st.markdown('<div class="premium-shell admin-divider">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Admin Dashboard</div>', unsafe_allow_html=True)
 
     df = all_submissions_df.copy()
     if df.empty:
@@ -1697,17 +1977,20 @@ if user_role == "admin":
         if len(dfv):
             dfv["error"] = dfv["calibrated_grade"] - dfv["psa_actual_grade"]
             dfv["abs_error"] = dfv["error"].abs()
-            st.write("MAE:", round(abs(dfv["error"]).mean(), 3))
-            st.write("Bias:", round(dfv["error"].mean(), 3))
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("MAE", round(abs(dfv["error"]).mean(), 3))
+            with m2:
+                st.metric("Bias", round(dfv["error"].mean(), 3))
             st.bar_chart(dfv["error"])
 
-    st.markdown("### Grade Range / Margin of Error Table")
+    st.markdown('<div class="section-title">Grade Range / Margin of Error Table</div>', unsafe_allow_html=True)
     if not range_table.empty:
         st.dataframe(range_table, use_container_width=True, hide_index=True)
     else:
         st.info("Not enough PSA-linked data yet to build historical grade ranges.")
 
-    st.markdown("### Diagnostics by Grade Band")
+    st.markdown('<div class="section-title">Diagnostics by Grade Band</div>', unsafe_allow_html=True)
     if "psa_actual_grade" in df.columns and "calibrated_grade" in df.columns:
         band_diag = df.dropna(subset=["psa_actual_grade", "calibrated_grade"]).copy()
         if not band_diag.empty:
@@ -1722,7 +2005,7 @@ if user_role == "admin":
             ).reset_index()
             st.dataframe(band_summary, use_container_width=True, hide_index=True)
 
-    st.markdown("### Diagnostics by Stock Type")
+    st.markdown('<div class="section-title">Diagnostics by Stock Type</div>', unsafe_allow_html=True)
     if {"stock_type", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
         stock_diag = df.dropna(subset=["stock_type", "psa_actual_grade", "calibrated_grade"]).copy()
         if not stock_diag.empty:
@@ -1735,7 +2018,7 @@ if user_role == "admin":
             ).reset_index()
             st.dataframe(stock_summary, use_container_width=True, hide_index=True)
 
-    st.markdown("### Diagnostics by Confidence Label")
+    st.markdown('<div class="section-title">Diagnostics by Confidence Label</div>', unsafe_allow_html=True)
     if {"confidence_label", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
         conf_diag = df.dropna(subset=["confidence_label", "psa_actual_grade", "calibrated_grade"]).copy()
         if not conf_diag.empty:
@@ -1748,7 +2031,7 @@ if user_role == "admin":
             ).reset_index()
             st.dataframe(conf_summary, use_container_width=True, hide_index=True)
 
-    st.markdown("### Version Analytics")
+    st.markdown('<div class="section-title">Version Analytics</div>', unsafe_allow_html=True)
     a1, a2 = st.columns(2)
     with a1:
         if "model_version" in df.columns:
@@ -1776,7 +2059,7 @@ if user_role == "admin":
             st.write("Average Grade by Version")
             st.dataframe(avg_grade, use_container_width=True, hide_index=True)
 
-    st.markdown("### Filters")
+    st.markdown('<div class="section-title">Filters</div>', unsafe_allow_html=True)
     filtered_df = df.copy()
 
     f1, f2, f3, f4, f5, f6 = st.columns(6)
@@ -1863,7 +2146,7 @@ if user_role == "admin":
     if len(show_cols):
         st.dataframe(filtered_df[show_cols], use_container_width=True, hide_index=True)
 
-    st.markdown("### Biggest PSA Misses")
+    st.markdown('<div class="section-title">Biggest PSA Misses</div>', unsafe_allow_html=True)
     if "abs_error" in filtered_df.columns:
         worst = filtered_df.sort_values("abs_error", ascending=False).head(15)
         worst_cols = [c for c in [
@@ -1873,7 +2156,7 @@ if user_role == "admin":
         ] if c in worst.columns]
         st.dataframe(worst[worst_cols], use_container_width=True, hide_index=True)
 
-    st.markdown("### Manual Centering Comparison")
+    st.markdown('<div class="section-title">Manual Centering Comparison</div>', unsafe_allow_html=True)
     if {"manual_centering_used", "psa_actual_grade", "calibrated_grade"}.issubset(df.columns):
         mc = df.dropna(subset=["manual_centering_used", "psa_actual_grade", "calibrated_grade"]).copy()
         if not mc.empty:
@@ -1895,8 +2178,7 @@ if user_role == "admin":
             mime="text/csv",
         )
 
-    st.markdown("---")
-    st.markdown("## Model Maintenance")
+    st.markdown('<div class="section-title">Model Maintenance</div>', unsafe_allow_html=True)
     st.markdown("""
     <div class="info-box">
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
@@ -2146,3 +2428,4 @@ if user_role == "admin":
             progress.progress(idx / max(total_rows, 1))
 
         st.success(f"True reanalysis completed. Saved {success_count} row(s), failed {fail_count}.")
+    st.markdown("</div>", unsafe_allow_html=True)
