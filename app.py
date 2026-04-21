@@ -1449,7 +1449,7 @@ if use_manual_centering:
             st.error(f"Could not open front image: {e}")
             st.stop()
 
-        max_display_width = 260
+        max_display_width = 295
         scale = min(1.0, max_display_width / front_image.width)
         display_width = int(front_image.width * scale)
         display_height = int(front_image.height * scale)
