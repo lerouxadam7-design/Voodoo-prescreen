@@ -1683,7 +1683,7 @@ if st.button("Run Analysis"):
         image_bytes=front_bytes,
         horizontal_ratio=h,
         vertical_ratio=v,
-        max_width=350
+        max_width=385
     )
 
     st.session_state.analysis_payload = {
