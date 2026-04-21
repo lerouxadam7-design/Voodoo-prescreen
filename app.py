@@ -1291,7 +1291,7 @@ st.markdown("""
     <div class="guide-item">• All pictures taken from same height/zoom with similar lighting</div>
     <div class="guide-item">• Take pictures of all 4 front corners</div>
     <div class="guide-item">• Use manual centering</div>
-</div>
+    <div class="guide-item">• 9.39= 9/10, 8.75= 8/9 >8.75= 8 or lower</div>
 """, unsafe_allow_html=True)
 
 if user_email:
