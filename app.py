@@ -395,7 +395,7 @@ st.markdown("""
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit-confidence-v2"
+MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit-confidence-2"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
