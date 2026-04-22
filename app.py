@@ -387,7 +387,7 @@ st.markdown("""
 <div class="hero-wrap">
     <div class="hero-title">VOODOO SPORTS GRADING</div>
     <div class="hero-subtitle">Premium card grading workflow with image analysis, confidence scoring, and admin benchmarking.</div>
-    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.6-ui-piecewise-benchmark-fit-confidence-v2</div>
+    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.7-ui-piecewise-benchmark-fit-confidence-v3</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -395,7 +395,7 @@ st.markdown("""
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.6-ui-piecewise-benchmark-fit-confidence-2"
+MODEL_VERSION = "v10.7-ui-piecewise-benchmark-fit-confidence-3"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -947,11 +947,11 @@ def compute_fitted_grade(
 
     grade = (
         8.35
-        + 0.25 * v_good
-        - 0.47 * corner_bad
+        + 0.45 * v_good
+        - 0.35 * corner_bad
         - 0.94 * edge_bad
-        + 38.67 * surface_bad
-        - 350.94 * (surface_bad ** 2)
+        + 22.0 * surface_bad
+        - 180.0 * (surface_bad ** 2)
     )
 
     return round(max(1.0, min(10.0, grade)), 2)
@@ -1449,7 +1449,7 @@ if use_manual_centering:
             st.error(f"Could not open front image: {e}")
             st.stop()
 
-        max_display_width = 320
+        max_display_width = 405
         scale = min(1.0, max_display_width / front_image.width)
         display_width = int(front_image.width * scale)
         display_height = int(front_image.height * scale)
