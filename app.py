@@ -1444,7 +1444,7 @@ if use_manual_centering:
     else:
         try:
             front_image = Image.open(front_image_obj).convert("RGB")
-            front_image = front_image.transpose(Image.Transpose.ROTATE_0)
+            front_image = front_image.transpose(Image.Transpose.ROTATE_270)
         except Exception as e:
             st.error(f"Could not open front image: {e}")
             st.stop()
