@@ -382,7 +382,7 @@ st.markdown("""
 <div class="hero-wrap">
     <div class="hero-title">VOODOO SPORTS GRADING</div>
     <div class="hero-subtitle">Premium card grading workflow with image analysis, confidence scoring, and admin benchmarking.</div>
-    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.10-fitted-formula-sim-under08-attempt</div>
+    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.11-approx-fit-formula</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -390,7 +390,7 @@ st.markdown("""
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.10-fitted-formula-sim-under08-attempt"
+MODEL_VERSION = "v10.11-approx-fit-formula"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -935,18 +935,18 @@ def compute_fitted_grade(
     edge_score: float,
     surface_score: float
 ) -> float:
-    v_good = 1.0 - float(vertical_ratio)
+    v_bad = float(vertical_ratio)
     corner_bad = float(corner_score)
     edge_bad = float(edge_score)
     surface_bad = float(surface_score)
 
     grade = (
-        7.9
-        + 0.75 * v_good
-        - 0.65 * corner_bad
-        - 1.25 * edge_bad
-        + 42.0 * surface_bad
-        - 420.0 * (surface_bad ** 2)
+        9.15
+        - 1.05 * v_bad
+        - 1.25 * corner_bad
+        - 2.25 * edge_bad
+        + 28.0 * surface_bad
+        - 220.0 * (surface_bad ** 2)
     )
 
     return round(max(1.0, min(10.0, grade)), 2)
@@ -989,7 +989,7 @@ def apply_calibration(
         edge_score=edge,
         surface_score=surface,
     )
-    return grade, "fitted_formula_under08_attempt"
+    return grade, "approx_fit_formula_primary"
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
