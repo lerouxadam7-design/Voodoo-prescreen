@@ -382,7 +382,7 @@ st.markdown("""
 <div class="hero-wrap">
     <div class="hero-title">VOODOO SPORTS GRADING</div>
     <div class="hero-subtitle">Premium card grading workflow with image analysis, confidence scoring, and admin benchmarking.</div>
-    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.8-ui-fitted-formula-primary-confidence-v1-revert</div>
+    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.10-fitted-formula-sim-under08-attempt</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -390,7 +390,7 @@ st.markdown("""
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.8-ui-fitted-formula-primary-confidence-v1-revert"
+MODEL_VERSION = "v10.10-fitted-formula-sim-under08-attempt"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -941,12 +941,12 @@ def compute_fitted_grade(
     surface_bad = float(surface_score)
 
     grade = (
-        8.35
-        + 0.45 * v_good
-        - 0.35 * corner_bad
-        - 0.94 * edge_bad
-        + 22.0 * surface_bad
-        - 180.0 * (surface_bad ** 2)
+        7.9
+        + 0.75 * v_good
+        - 0.65 * corner_bad
+        - 1.25 * edge_bad
+        + 42.0 * surface_bad
+        - 420.0 * (surface_bad ** 2)
     )
 
     return round(max(1.0, min(10.0, grade)), 2)
@@ -989,7 +989,7 @@ def apply_calibration(
         edge_score=edge,
         surface_score=surface,
     )
-    return grade, "fitted_formula_v2_primary"
+    return grade, "fitted_formula_under08_attempt"
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -2193,7 +2193,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the fitted formula as the primary grading rule while keeping piecewise for comparison.
+    then applies the current fitted formula as the primary grading rule while keeping piecewise for comparison.
     </div>
     """, unsafe_allow_html=True)
 
