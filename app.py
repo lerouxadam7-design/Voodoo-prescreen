@@ -1324,7 +1324,6 @@ st.markdown("""
     <div class="guide-item">• All pictures taken from same height/zoom with similar lighting</div>
     <div class="guide-item">• Take pictures of all 4 front corners</div>
     <div class="guide-item">• Use manual centering</div>
-    <div class="guide-item">• 9.39= 9/10, 8.75= 8/9, <8.75= 8 or lower</div>
 """, unsafe_allow_html=True)
 
 if user_email:
@@ -1489,14 +1488,14 @@ if use_manual_centering:
         display_image = front_image.resize((display_width, display_height))
 
         st.markdown(
-            '<div class="small-note">Image rotated 90 degrees counterclockwise for manual centering. Use fine sliders for precise mobile adjustment.</div>',
+            '<div class="small-note">Image rotated 180 degrees counterclockwise for manual centering. Use fine sliders for precise mobile adjustment.</div>',
             unsafe_allow_html=True
         )
 
-        left_percent = st.slider("Left", 0.0, 100.0, 8.0, step=0.1)
-        right_percent = st.slider("Right", 0.0, 100.0, 92.0, step=0.1)
-        top_percent = st.slider("Top", 0.0, 100.0, 8.0, step=0.1)
-        bottom_percent = st.slider("Bottom", 0.0, 100.0, 92.0, step=0.1)
+        left_percent = st.slider("Left", 0.0, 100.0, 1.0, step=0.1)
+        right_percent = st.slider("Right", 0.0, 100.0, 99.0, step=0.1)
+        top_percent = st.slider("Top", 0.0, 100.0, 1.0, step=0.1)
+        bottom_percent = st.slider("Bottom", 0.0, 100.0, 99.0, step=0.1)
 
         left_x = (left_percent / 100.0) * display_width
         right_x = (right_percent / 100.0) * display_width
