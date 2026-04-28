@@ -382,7 +382,7 @@ st.markdown("""
 <div class="hero-wrap">
     <div class="hero-title">VOODOO SPORTS GRADING</div>
     <div class="hero-subtitle">Premium card grading workflow with image analysis, confidence scoring, and admin benchmarking.</div>
-    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.11-approx-fit-formula</div>
+    <div class="version-chip">LOCKED PRODUCTION VERSION · v10.12-ridge-fit-under08</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -390,7 +390,7 @@ st.markdown("""
 # CONFIG
 # ============================================================
 
-MODEL_VERSION = "v10.11-approx-fit-formula"
+MODEL_VERSION = "v10.12-ridge-fit-under08"
 PRODUCTION_STATUS = "LOCKED PRODUCTION VERSION"
 
 SUPABASE_URL = st.secrets["supabase"]["url"]
@@ -928,6 +928,30 @@ def lookup_grade_range(predicted_grade: float, range_table: pd.DataFrame) -> dic
 # GRADING MODELS
 # ============================================================
 
+def compute_base_raw_grade(
+    horizontal_ratio: float,
+    vertical_ratio: float,
+    corner_score: float,
+    edge_score: float,
+    surface_score: float
+) -> float:
+    v_good = 1.0 - float(vertical_ratio)
+    corner_bad = float(corner_score)
+    edge_bad = float(edge_score)
+    surface_bad = float(surface_score)
+
+    grade = (
+        8.35
+        + 0.25 * v_good
+        - 0.47 * corner_bad
+        - 0.94 * edge_bad
+        + 38.67 * surface_bad
+        - 350.94 * (surface_bad ** 2)
+    )
+
+    return round(max(1.0, min(10.0, grade)), 2)
+
+
 def compute_fitted_grade(
     horizontal_ratio: float,
     vertical_ratio: float,
@@ -935,18 +959,22 @@ def compute_fitted_grade(
     edge_score: float,
     surface_score: float
 ) -> float:
-    v_bad = float(vertical_ratio)
-    corner_bad = float(corner_score)
-    edge_bad = float(edge_score)
-    surface_bad = float(surface_score)
+    base_raw_grade = (
+        8.35
+        + 0.25 * (1.0 - float(vertical_ratio))
+        - 0.47 * float(corner_score)
+        - 0.94 * float(edge_score)
+        + 38.67 * float(surface_score)
+        - 350.94 * (float(surface_score) ** 2)
+    )
 
     grade = (
-        9.15
-        - 1.05 * v_bad
-        - 1.25 * corner_bad
-        - 2.25 * edge_bad
-        + 28.0 * surface_bad
-        - 220.0 * (surface_bad ** 2)
+        6.352746894335614
+        + 0.2125517452912357 * float(base_raw_grade)
+        + 1.0969743530394758 * float(vertical_ratio)
+        + 0.6867993814790476 * float(corner_score)
+        + 0.19836153854880495 * float(edge_score)
+        - 0.16523592748691407 * float(surface_score)
     )
 
     return round(max(1.0, min(10.0, grade)), 2)
@@ -989,7 +1017,7 @@ def apply_calibration(
         edge_score=edge,
         surface_score=surface,
     )
-    return grade, "approx_fit_formula_primary"
+    return grade, "ridge_fit_from_confirmed_psa_rows"
 
 
 def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: float) -> dict:
@@ -1012,7 +1040,7 @@ def compute_psa_caps(h: float, v: float, edge: float, corner: float, surface: fl
     return {
         "overall_grade": fitted_grade,
         "candidate_grade": fitted_grade,
-        "raw_candidate_grade": fitted_grade,
+        "raw_candidate_grade": compute_base_raw_grade(h, v, corner, edge, surface),
         "piecewise_candidate_grade": piecewise_grade,
         "centering_cap": round(centering_cap, 2),
         "corner_cap": round(corner_cap, 2),
@@ -1212,7 +1240,7 @@ def decision_panel_admin(
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Formula Output</div>', unsafe_allow_html=True)
-    st.write("Fitted Formula Grade:", raw_grade)
+    st.write("Base Raw Formula Grade:", raw_grade)
     st.write("Piecewise Comparison Grade:", piecewise_grade)
     st.write("Final Grade:", grade)
     st.write("Grading Path:", grading_path)
@@ -1650,7 +1678,7 @@ if st.button("Run Analysis"):
     else:
         st.session_state.player_name_edit = detected_player_name if detected_player_name else ""
 
-    raw_grade = compute_fitted_grade(h, v, corner, edge, float(surface))
+    raw_grade = compute_base_raw_grade(h, v, corner, edge, float(surface))
     piecewise_grade = apply_piecewise_grade(surface_score=float(surface), edge_score=edge, horizontal_ratio=h)
     grade, grading_path = apply_calibration(
         raw_grade=raw_grade,
@@ -1670,7 +1698,7 @@ if st.button("Run Analysis"):
         edge=edge,
         corner=corner,
         surface=float(surface),
-        fitted_grade=raw_grade,
+        fitted_grade=grade,
         piecewise_grade=piecewise_grade,
         used_surface_fallback=used_surface_fallback,
         corner_count=corner_count_used,
@@ -1846,7 +1874,7 @@ if st.session_state.analysis_complete and st.session_state.analysis_payload is n
         st.write("Adjusted Corner Score:", round(remap_corner_for_model(result["corner_score"]), 4))
         st.write("Edge Score:", round(result["edge_score"], 4))
         st.write("Surface Score:", round(float(result["surface_score"]), 4))
-        st.write("Fitted Formula Grade:", round(float(result["raw_grade"]), 2))
+        st.write("Base Raw Formula Grade:", round(float(result["raw_grade"]), 2))
         st.write("Piecewise Comparison Grade:", round(float(result["piecewise_grade"]), 2))
         st.write("Final Grade:", round(float(result["grade"]), 2))
         st.write("Corner Count Used:", result["corner_count"])
@@ -2193,7 +2221,7 @@ if user_role == "admin":
     This reanalysis reruns current front-image analysis and surface analysis using the saved front image URL,
     reruns current corner analysis if corner image URLs are available,
     reapplies saved manual centering ratios when the original submission used manual centering,
-    then applies the current fitted formula as the primary grading rule while keeping piecewise for comparison.
+    then applies the ridge-fitted grading rule and the current confidence model.
     </div>
     """, unsafe_allow_html=True)
 
@@ -2325,7 +2353,7 @@ if user_role == "admin":
                     corner = min(fresh_corner_scores)
                     corner_count_used = len(fresh_corner_scores)
 
-                raw_grade = compute_fitted_grade(h, v, corner, edge, float(row_surface))
+                raw_grade = compute_base_raw_grade(h, v, corner, edge, float(row_surface))
                 piecewise_grade = apply_piecewise_grade(surface_score=float(row_surface), edge_score=edge, horizontal_ratio=h)
 
                 new_grade, grading_path = apply_calibration(
@@ -2346,7 +2374,7 @@ if user_role == "admin":
                     edge=edge,
                     corner=corner,
                     surface=float(row_surface),
-                    fitted_grade=raw_grade,
+                    fitted_grade=new_grade,
                     piecewise_grade=piecewise_grade,
                     used_surface_fallback=used_surface_fallback,
                     corner_count=corner_count_used,
